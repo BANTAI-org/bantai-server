@@ -4,51 +4,59 @@ import {
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
-import type { Transporter } from 'nodemailer';
 import { ConfigService } from '@nestjs/config';
-import { NODEMAILER_CLIENT } from './providers/nodemailer.provider';
+import { Resend } from 'resend';
+import { RESEND_CLIENT } from './providers/resend.provider'; // Update this path to match your structure
 
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
 
   constructor(
-    @Inject(NODEMAILER_CLIENT) private readonly transporter: Transporter,
+    @Inject(RESEND_CLIENT) private readonly resend: Resend,
     private readonly configService: ConfigService,
   ) {}
 
   /**
-   * Low-level send — any caller-provided subject/HTML goes straight
-   * out via SMTP. Purpose-specific methods below should be preferred
+   * Low-level send. Purpose-specific methods below should be preferred
    * so the copy/branding for each email type lives in one place.
    *
-   * The sender address comes from EMAIL_FROM. With the Gmail/SMTP
-   * transport currently wired in (see nodemailer.provider.ts), Gmail
-   * enforces that this matches the authenticated account (GMAIL_USER)
-   * or one of its verified "Send As" aliases — a mismatched From here
-   * gets silently rewritten by Gmail rather than honored, so keep
-   * EMAIL_FROM equal to GMAIL_USER while this provider is in use.
-   *
-   * nodemailer.sendMail REJECTS its promise on failure (unlike
-   * Resend's client, which returned an { error } field instead of
-   * throwing) — hence the try/catch here rather than an `if (error)`
-   * check.
+   * The sender address comes from EMAIL_FROM, which MUST match your
+   * newly verified domain in Resend.
    *
    * @param to Recipient email address.
    * @param subject Email subject line.
    * @param html Full HTML body.
-   * @throws {InternalServerErrorException} If the SMTP send fails.
+   * @throws {InternalServerErrorException} If the Resend API fails.
    */
   async sendEmail(to: string, subject: string, html: string) {
     const from = this.configService.getOrThrow<string>('EMAIL_FROM');
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-      return await this.transporter.sendMail({ from, to, subject, html });
+      const { data, error } = await this.resend.emails.send({
+        from,
+        to,
+        subject,
+        html,
+      });
+
+      // Resend returns API errors (e.g., 403, 429) inside the resolved object,
+      // it does not throw an exception for them. We must check this manually.
+      if (error) {
+        this.logger.error(
+          `Resend failed to send "${subject}" to ${to}: ${error.message}`,
+        );
+        throw new InternalServerErrorException(
+          `Email failed to send: ${error.message}`,
+        );
+      }
+
+      return data;
     } catch (err: unknown) {
+      // This only catches network-level failures or SDK crashes
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(
-        `SMTP failed to send "${subject}" to ${to}: ${message}`,
+        `Unexpected error sending "${subject}" to ${to}: ${message}`,
       );
       throw new InternalServerErrorException(
         `Email failed to send: ${message}`,
@@ -58,14 +66,10 @@ export class EmailService {
 
   /**
    * Builds an absolute, correctly-encoded link back to the app using
-   * FRONTEND_URL from config, so links point at a page with a form
-   * rather than the bare API, and so the base URL doesn't need to be
-   * hardcoded per environment (local/staging/prod).
+   * FRONTEND_URL from config.
    *
    * @param path Route path, e.g. '/activate' or '/reset-password'.
-   * @param rawToken The UNHASHED token — this is the only place the
-   *   raw secret exists outside the moment it was generated and
-   *   hashed. It is never persisted anywhere as plaintext.
+   * @param rawToken The UNHASHED token.
    */
   private buildActionUrl(path: string, rawToken: string): string {
     const baseUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
@@ -76,16 +80,6 @@ export class EmailService {
 
   /**
    * Sends the account-activation email containing a single-use link.
-   * The account has no password yet — this link is the only way for
-   * the holder to set one and move the account to `active`.
-   *
-   * NOTE ON REAL DELIVERY: this currently sends through your own
-   * Gmail account (nodemailer.provider.ts) as a stopgap while no
-   * domain is verified with a real transactional provider — see
-   * GMAIL_USER / GMAIL_APP_PASSWORD / EMAIL_FROM. It reaches any real
-   * inbox today, capped around 500 sends/day on a free Gmail account.
-   * Swap back to a verified-domain provider (e.g. Resend, once a
-   * domain is verified) before relying on this for production volume.
    *
    * @param to Recipient email address (the newly provisioned user).
    * @param rawToken Unhashed activation token.
@@ -104,10 +98,7 @@ export class EmailService {
   }
 
   /**
-   * Sends the password-reset email containing a single-use link. Used
-   * both for self-service "forgot password" and for an
-   * admin-triggered compromise-response reset on an already-active
-   * account — same template either way.
+   * Sends the password-reset email containing a single-use link.
    *
    * @param to Recipient email address.
    * @param rawToken Unhashed password-reset token.
