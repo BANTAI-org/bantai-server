@@ -76,4 +76,19 @@ export class EmailService {
 
     await this.sendEmail(to, 'Reset your BANTAI password', html);
   }
+
+  async sendOtpEmail(
+    to: string,
+    code: string,
+    expiresInMinutes: number,
+  ): Promise<void> {
+    const html = `
+    <p>Your BANTAI verification code is:</p>
+    <p style="font-size:28px;letter-spacing:6px;"><strong>${code}</strong></p>
+    <p>This code will expire in ${expiresInMinutes} minutes. Never share it with anyone. BANTAI dispatch will never ask you for it.</p>
+    <p>If you didn't request this, you can safely ignore this email.</p>
+  `;
+
+    await this.sendEmail(to, 'Your BANTAI verification code', html);
+  }
 }

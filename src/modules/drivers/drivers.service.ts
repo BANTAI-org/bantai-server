@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -9,6 +11,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import type { Redis } from 'ioredis';
 import { DriverRepository } from './drivers.repository';
 import { CreateDriverDto } from './dto/create-driver.dto';
 import {
@@ -16,13 +19,25 @@ import {
   toDriverProfilePatch,
   toUserAccountPatch,
 } from './dto/patch-driver-profile.dto';
+import { PasswordResetIdentityDto } from './dto/password-reset-identity.dto';
+import { ResetPasswordDto } from './dto/password-reset.dto';
 import { CreateDriverProfileData } from './types/create-driver-profile.types';
 import { CreateDriverUserAccount } from './types/create-driver-account.type';
 import { DriverProfileDataRow } from './types/driver-profile-data-row.type';
 import { UserAccountPatch } from './types/patch-user-account.type';
+import {
+  DriverPasswordTarget,
+  ResetIdentity,
+} from './types/password-reset-types';
 import { UserIdType } from '../responders/types/user-id.types';
 import { AuthProviderEnum } from '../responders/enums/auth-provider.enum';
 import { ServiceProviderEnum } from '../responders/enums/service-provider.enum';
+import {
+  EMAIL_OTP_TTL_SECONDS,
+  EmailOtpService,
+} from '../email/email-otp.service';
+import { REDIS_CLIENT } from '../redis/provider/redis.provider';
+import { SmsService } from '../sms/sms.service';
 import {
   SOCIAL_IDENTITY_VERIFIERS,
   type SocialIdentityVerifiers,
@@ -43,6 +58,22 @@ const PG_UNIQUE_VIOLATION = '23505';
 const PG_CHECK_VIOLATION = '23514';
 const PG_NOT_NULL_VIOLATION = '23502';
 const PG_DATA_EXCEPTION_CLASS = '22';
+
+// Forgot-password
+const RESET_OTP_PURPOSE = 'password_reset';
+const RESET_RESEND_COOLDOWN_SECONDS = 60;
+const RESET_MAX_SENDS_PER_HOUR = 5;
+const RESET_MAX_VERIFY_ATTEMPTS = 5;
+const HOUR_SECONDS = 3600;
+const INVALID_CODE_MESSAGE = 'Invalid or expired verification code';
+
+type OtpChannel =
+  { type: 'sms'; phone: string } | { type: 'email'; email: string };
+
+export interface OtpRequestResult {
+  expires_in_seconds: number;
+  resend_after_seconds: number;
+}
 
 interface PgErrorLike {
   code?: string;
@@ -69,6 +100,9 @@ export class DriverService {
     private readonly driverRepository: DriverRepository,
     @Inject(SOCIAL_IDENTITY_VERIFIERS)
     private readonly socialVerifiers: SocialIdentityVerifiers,
+    private readonly smsService: SmsService,
+    private readonly emailOtpService: EmailOtpService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
   async createDriver(
@@ -177,6 +211,197 @@ export class DriverService {
       throw new NotFoundException('Driver account not found');
     }
     return profile;
+  }
+
+  // ---------------------------------------------------------------
+  // Forgot-password (3-step wizard)
+  //   1. the app collects the new password locally
+  //   2. requestPasswordResetOtp: sends a 6-digit code (SMS or email)
+  //   3. resetPassword: identity + code + new password in ONE request
+  //
+  // The password is changed only after the code is verified. Any OTP
+  // failure throws before the repository is touched.
+  // ---------------------------------------------------------------
+
+  /**
+   * Always answers the same way, whether or not an account matches, so this
+   * can't be used to find out who is registered. The send runs in the
+   * background so response timing and provider errors can't leak that either.
+   */
+  async requestPasswordResetOtp(
+    dto: PasswordResetIdentityDto,
+  ): Promise<OtpRequestResult> {
+    const identity = this.pickResetIdentity(dto);
+    const driver = await this.findPasswordResetTarget(identity);
+
+    if (driver) {
+      void this.dispatchResetOtp(identity, driver).catch((error: unknown) => {
+        this.logger.error(
+          `Password-reset OTP could not be sent to driver ${driver.id}`,
+          error instanceof Error ? error.stack : undefined,
+        );
+      });
+    }
+
+    return {
+      expires_in_seconds: EMAIL_OTP_TTL_SECONDS,
+      resend_after_seconds: RESET_RESEND_COOLDOWN_SECONDS,
+    };
+  }
+
+  async resetPassword(dto: ResetPasswordDto): Promise<void> {
+    const identity = this.pickResetIdentity(dto);
+    const driver = await this.findPasswordResetTarget(identity);
+    if (!driver) throw new BadRequestException(INVALID_CODE_MESSAGE);
+
+    // 6 digits is only 1,000,000 guesses, and this endpoint changes a
+    // password, so guesses are capped per account whatever the identity.
+    const attempts = await this.hitCounter(
+      `pwreset:attempts:${driver.id}`,
+      EMAIL_OTP_TTL_SECONDS,
+    );
+    if (attempts > RESET_MAX_VERIFY_ATTEMPTS) {
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          message: 'Too many incorrect attempts. Please request a new code.',
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    // Throws on a wrong, expired or reused code. Nothing below runs then.
+    await this.verifyResetCode(
+      this.resetChannelFor(identity, driver),
+      dto.otp_code,
+    );
+
+    // Hash only AFTER the code is good, so unauthenticated callers can't
+    // make the server burn bcrypt time with random codes.
+    const passwordHash = await bcrypt.hash(dto.new_password, BCRYPT_ROUNDS);
+
+    let updated: boolean;
+    try {
+      updated = await this.driverRepository.resetPasswordAndRevokeSessions(
+        driver.id,
+        passwordHash,
+      );
+    } catch (error: unknown) {
+      this.rethrowDbError(error, 'resetPassword');
+    }
+    if (!updated) throw new BadRequestException(INVALID_CODE_MESSAGE);
+
+    await this.redis.del(`pwreset:attempts:${driver.id}`);
+  }
+
+  private async dispatchResetOtp(
+    identity: ResetIdentity,
+    driver: DriverPasswordTarget,
+  ): Promise<void> {
+    // Keyed by account id, so switching between id / email / phone can't
+    // get around the limits.
+    const cooldownKey = `pwreset:cooldown:${driver.id}`;
+    const claimed = await this.redis.set(
+      cooldownKey,
+      '1',
+      'EX',
+      RESET_RESEND_COOLDOWN_SECONDS,
+      'NX',
+    );
+    if (claimed === null) return;
+
+    const sends = await this.hitCounter(
+      `pwreset:sends:${driver.id}`,
+      HOUR_SECONDS,
+    );
+    if (sends > RESET_MAX_SENDS_PER_HOUR) return;
+
+    const channel = this.resetChannelFor(identity, driver);
+    try {
+      if (channel.type === 'sms') {
+        await this.smsService.sendOtp(channel.phone);
+      } else {
+        await this.emailOtpService.send(channel.email, RESET_OTP_PURPOSE);
+      }
+    } catch (error: unknown) {
+      // Nothing was delivered, so don't make them wait out the cooldown.
+      await this.redis.del(cooldownKey);
+      throw error;
+    }
+
+    // A fresh code gets a fresh guess budget.
+    await this.redis.del(`pwreset:attempts:${driver.id}`);
+  }
+
+  private async verifyResetCode(
+    channel: OtpChannel,
+    code: string,
+  ): Promise<void> {
+    if (channel.type === 'sms') {
+      await this.smsService.verifyOtp(channel.phone, code);
+      return;
+    }
+    const valid = await this.emailOtpService.verify(
+      channel.email,
+      RESET_OTP_PURPOSE,
+      code,
+    );
+    if (!valid) throw new BadRequestException(INVALID_CODE_MESSAGE);
+  }
+
+  /** Email -> email code. Phone -> SMS. Id -> SMS to the phone on file, else email. */
+  private resetChannelFor(
+    identity: ResetIdentity,
+    driver: DriverPasswordTarget,
+  ): OtpChannel {
+    if (identity.kind === 'email') {
+      return { type: 'email', email: driver.email.toLowerCase() };
+    }
+    if (identity.kind === 'm_number') {
+      return { type: 'sms', phone: identity.value };
+    }
+    return driver.m_number
+      ? { type: 'sms', phone: driver.m_number }
+      : { type: 'email', email: driver.email.toLowerCase() };
+  }
+
+  private pickResetIdentity(dto: PasswordResetIdentityDto): ResetIdentity {
+    const provided: ResetIdentity[] = [];
+    if (dto.id) provided.push({ kind: 'id', value: dto.id });
+    if (dto.email) provided.push({ kind: 'email', value: dto.email });
+    if (dto.m_number) provided.push({ kind: 'm_number', value: dto.m_number });
+
+    const [only] = provided;
+    if (provided.length !== 1 || !only) {
+      throw new BadRequestException(
+        'Provide exactly one of id, email or m_number.',
+      );
+    }
+    return only;
+  }
+
+  private async findPasswordResetTarget(
+    identity: ResetIdentity,
+  ): Promise<DriverPasswordTarget | null> {
+    try {
+      return await this.driverRepository.findDriverForPasswordReset(identity);
+    } catch (error: unknown) {
+      this.rethrowDbError(error, 'findDriverForPasswordReset');
+    }
+  }
+
+  /** INCR + EXPIRE NX in one MULTI, so a counter can never be left without a TTL. */
+  private async hitCounter(key: string, ttlSeconds: number): Promise<number> {
+    const results = await this.redis
+      .multi()
+      .incr(key)
+      .expire(key, ttlSeconds, 'NX')
+      .exec();
+    const count = results?.[0]?.[1];
+    if (typeof count !== 'number') {
+      throw new Error('Redis counter failed');
+    }
+    return count;
   }
 
   private async resolveIdentity(dto: CreateDriverDto): Promise<IdentityFields> {
