@@ -13,6 +13,8 @@ import {
   ResetIdentity,
   ResetIdentityKind,
 } from './types/password-reset-types';
+import { DutyStatusEnum } from './enums/duty-status.enum';
+import { DutyStatusRow } from './interfaces/duty-status.interface';
 
 /**
  * The ONLY column names a patch can ever put into a SQL string. The
@@ -377,5 +379,19 @@ export class DriverRepository {
       );
       return true;
     });
+  }
+
+  async checkCurrentDutyStatus(id: string): Promise<DutyStatusEnum | null> {
+    const sql = 'SELECT duty_status FROM d_profile WHERE user_id = $1';
+    const result = await this.db.query<DutyStatusRow>(sql, [id]);
+
+    // Optional chaining safely handles empty result sets without throwing an unhandled TypeError
+    return result.rows[0]?.duty_status ?? null;
+  }
+
+  async changeDuty(id: string, new_status: DutyStatusEnum) {
+    const sql = 'UPDATE d_profile SET duty_status = $1 WHERE user_id = $2';
+    const result = await this.db.query(sql, [new_status, id]);
+    return result.rowCount === 1;
   }
 }

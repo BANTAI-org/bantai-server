@@ -60,6 +60,8 @@ import {
 } from './util/otp-policey.util';
 import { OtpRequestResult } from './interfaces/otp-result.interface';
 import { hasChanges } from './util/has-changes.util';
+import { UserIdDTO } from './dto/user-id.dto';
+import { DutyStatusEnum } from './enums/duty-status.enum';
 
 type IdentityFields = Pick<
   CreateDriverUserAccount,
@@ -475,5 +477,34 @@ export class DriverService {
       error instanceof Error ? error.stack : undefined,
     );
     throw new InternalServerErrorException();
+  }
+
+  async changeDriverStatus(dto: UserIdDTO): Promise<boolean> {
+    const { id } = dto;
+    try {
+      const currentDutyStatus =
+        await this.driverRepository.checkCurrentDutyStatus(id);
+
+      if (!currentDutyStatus) {
+        throw new NotFoundException('Account with id doesnt exist');
+      }
+
+      const new_duty =
+        currentDutyStatus === DutyStatusEnum.ON_DUTY
+          ? DutyStatusEnum.OFF_DUTY
+          : DutyStatusEnum.ON_DUTY;
+
+      const response = await this.driverRepository.changeDuty(id, new_duty);
+      return response;
+    } catch (error: unknown) {
+      this.logger.error(
+        'error in changing duty: ',
+        error instanceof Error ? error.stack : undefined,
+      );
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Unknown error occured');
+    }
   }
 }
