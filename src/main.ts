@@ -23,7 +23,10 @@ async function bootstrap() {
   const apiPrefix = configService.get<string>('API_PREFIX', '/api/v1');
 
   const corsOrigins = configService
-    .get<string>('CORS_ORIGIN', 'http://localhost:3001,http://localhost:5173')
+    .get<string>(
+      'CORS_ORIGIN',
+      'http://localhost:3001,http://localhost:5173, https://responder-account-management-spa.vercel.app',
+    )
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
