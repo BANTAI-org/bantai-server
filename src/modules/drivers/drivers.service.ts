@@ -42,6 +42,24 @@ import {
   SOCIAL_IDENTITY_VERIFIERS,
   type SocialIdentityVerifiers,
 } from './types/social-identity-provider.type';
+import { isPastDate } from './util/is-past-date.util';
+import { isPgError } from './util/pg-error.util';
+import { OtpChannel } from './types/otp-channel.type';
+import {
+  BCRYPT_ROUNDS,
+  PG_UNIQUE_VIOLATION,
+  HOUR_SECONDS,
+  INVALID_CODE_MESSAGE,
+  PG_CHECK_VIOLATION,
+  PG_DATA_EXCEPTION_CLASS,
+  PG_NOT_NULL_VIOLATION,
+  RESET_MAX_SENDS_PER_HOUR,
+  RESET_MAX_VERIFY_ATTEMPTS,
+  RESET_OTP_PURPOSE,
+  RESET_RESEND_COOLDOWN_SECONDS,
+} from './util/otp-policey.util';
+import { OtpRequestResult } from './interfaces/otp-result.interface';
+import { hasChanges } from './util/has-changes.util';
 
 type IdentityFields = Pick<
   CreateDriverUserAccount,
@@ -51,46 +69,6 @@ type IdentityFields = Pick<
   | 'password_hash'
   | 'email_verified_at'
 >;
-
-const BCRYPT_ROUNDS = 12;
-
-const PG_UNIQUE_VIOLATION = '23505';
-const PG_CHECK_VIOLATION = '23514';
-const PG_NOT_NULL_VIOLATION = '23502';
-const PG_DATA_EXCEPTION_CLASS = '22';
-
-// Forgot-password
-const RESET_OTP_PURPOSE = 'password_reset';
-const RESET_RESEND_COOLDOWN_SECONDS = 60;
-const RESET_MAX_SENDS_PER_HOUR = 5;
-const RESET_MAX_VERIFY_ATTEMPTS = 5;
-const HOUR_SECONDS = 3600;
-const INVALID_CODE_MESSAGE = 'Invalid or expired verification code';
-
-type OtpChannel =
-  { type: 'sms'; phone: string } | { type: 'email'; email: string };
-
-export interface OtpRequestResult {
-  expires_in_seconds: number;
-  resend_after_seconds: number;
-}
-
-interface PgErrorLike {
-  code?: string;
-  constraint?: string;
-}
-
-function isPgError(error: unknown): error is PgErrorLike {
-  return typeof error === 'object' && error !== null && 'code' in error;
-}
-
-function hasChanges(patch: object): boolean {
-  return Object.values(patch).some((value) => value !== undefined);
-}
-
-function isPastDate(isoDate: string): boolean {
-  return new Date(`${isoDate}T00:00:00.000Z`).getTime() < Date.now();
-}
 
 @Injectable()
 export class DriverService {
