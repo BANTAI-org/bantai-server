@@ -10,6 +10,7 @@ import { validate } from './config/env.config';
 import { RespondersModule } from './modules/responders/responders.module';
 import { DriverModule } from './modules/drivers/drivers.module';
 import { SmsModule } from './modules/sms/sms.module';
+import { RedisModule } from './modules/redis/redis.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { SmsModule } from './modules/sms/sms.module';
     RespondersModule,
     DriverModule,
     SmsModule,
+    RedisModule,
   ],
   controllers: [AppController],
   providers: [AppService],
