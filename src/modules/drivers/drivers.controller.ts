@@ -71,11 +71,6 @@ export class DriverController {
     return this.driverService.updateProfile(userId, dto, phoneVerifiedAt);
   }
 
-  /**
-   * Public Endpoint: Forgot-password, step 1. Sends a 6-digit code (SMS or
-   * email, depending on the identity given). The response is the same
-   * whether or not an account matches.
-   */
   @Post('forgot-password/request')
   @HttpCode(HttpStatus.ACCEPTED)
   async requestPasswordReset(
@@ -85,10 +80,6 @@ export class DriverController {
     return this.driverService.requestPasswordResetOtp(dto);
   }
 
-  /**
-   * Public Endpoint: Forgot-password, step 2. Checks the code. 200 with a
-   * single-use reset token on success; 400/429 otherwise.
-   */
   @Post('forgot-password/verify')
   @HttpCode(HttpStatus.OK)
   async verifyPasswordResetOtp(
@@ -98,10 +89,6 @@ export class DriverController {
     return this.driverService.verifyPasswordResetOtp(dto);
   }
 
-  /**
-   * Public Endpoint: Forgot-password, step 3. Reset token + new password.
-   * The token is single use and proves step 2 was passed.
-   */
   @Post('forgot-password/reset')
   @HttpCode(HttpStatus.NO_CONTENT)
   async resetPassword(
