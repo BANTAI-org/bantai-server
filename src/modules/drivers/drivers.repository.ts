@@ -320,14 +320,6 @@ export class DriverRepository {
     return { sets, paramIndex };
   }
 
-  async updatePassword(id: string, new_password: string) {
-    const sql = 'UPDATE user_account SET password_hash = $1 WHERE id = $2';
-
-    const result = await this.db.query(sql, [new_password, id]);
-
-    return result.rowCount === 1;
-  }
-
   // ---------------------------------------------------------------
   // Forgot-password
   // ---------------------------------------------------------------
@@ -385,7 +377,6 @@ export class DriverRepository {
     const sql = 'SELECT duty_status FROM d_profile WHERE user_id = $1';
     const result = await this.db.query<DutyStatusRow>(sql, [id]);
 
-    // Optional chaining safely handles empty result sets without throwing an unhandled TypeError
     return result.rows[0]?.duty_status ?? null;
   }
 

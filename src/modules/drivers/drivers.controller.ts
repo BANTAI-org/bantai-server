@@ -20,9 +20,11 @@ import { AuthTokens } from '../auth/interfaces/auth-token.interface';
 import { RefreshCookieService } from '../auth/helpers/refresh-cookie.help';
 import { DriverService } from './drivers.service';
 import { OtpRequestResult } from './interfaces/otp-result.interface';
+import { ResetTokenResult } from './interfaces/result-token-result.interface';
 import { CreateDriverDto } from './dto/create-driver.dto';
 import { PatchDriverProfileDto } from './dto/patch-driver-profile.dto';
 import { PasswordResetIdentityDto } from './dto/password-reset-identity.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResetPasswordDto } from './dto/password-reset.dto';
 import { UserIdType } from '../responders/types/user-id.types';
 
@@ -35,11 +37,6 @@ export class DriverController {
     private readonly refreshCookie: RefreshCookieService,
   ) {}
 
-  /**
-   * Public Endpoint: Driver Self-Registration.
-   * Creates the account and signs the driver in, returning the same
-   * tokens as the sign-in endpoints (refresh token also set as a cookie).
-   */
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   async register(
@@ -59,10 +56,6 @@ export class DriverController {
     return result;
   }
 
-  /**
-   * Protected Endpoint: Driver Profile Update.
-   * Restricted strictly to authenticated users with the DRIVER role.
-   */
   @Patch('profile')
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.DRIVER)
@@ -79,9 +72,9 @@ export class DriverController {
   }
 
   /**
-   * Public Endpoint: Forgot-password, wizard step 2. Sends a 6-digit code
-   * (SMS or email, depending on the identity given). The response is the
-   * same whether or not an account matches.
+   * Public Endpoint: Forgot-password, step 1. Sends a 6-digit code (SMS or
+   * email, depending on the identity given). The response is the same
+   * whether or not an account matches.
    */
   @Post('forgot-password/request')
   @HttpCode(HttpStatus.ACCEPTED)
@@ -93,8 +86,21 @@ export class DriverController {
   }
 
   /**
-   * Public Endpoint: Forgot-password, wizard step 3. Identity + code + new
-   * password in one request; the password changes only if the code is valid.
+   * Public Endpoint: Forgot-password, step 2. Checks the code. 200 with a
+   * single-use reset token on success; 400/429 otherwise.
+   */
+  @Post('forgot-password/verify')
+  @HttpCode(HttpStatus.OK)
+  async verifyPasswordResetOtp(
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    dto: VerifyOtpDto,
+  ): Promise<ResetTokenResult> {
+    return this.driverService.verifyPasswordResetOtp(dto);
+  }
+
+  /**
+   * Public Endpoint: Forgot-password, step 3. Reset token + new password.
+   * The token is single use and proves step 2 was passed.
    */
   @Post('forgot-password/reset')
   @HttpCode(HttpStatus.NO_CONTENT)

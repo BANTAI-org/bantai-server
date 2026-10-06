@@ -10,6 +10,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { createHash, randomBytes } from 'node:crypto';
 import * as bcrypt from 'bcrypt';
 import type { Redis } from 'ioredis';
 import { DriverRepository } from './drivers.repository';
@@ -59,12 +60,14 @@ import {
   RESET_RESEND_COOLDOWN_SECONDS,
 } from './util/otp-policey.util';
 import { OtpRequestResult } from './interfaces/otp-result.interface';
+import { ResetTokenResult } from './interfaces/result-token-result.interface';
 import { hasChanges } from './util/has-changes.util';
 import { UserIdDTO } from './dto/user-id.dto';
 import { DutyStatusEnum } from './enums/duty-status.enum';
 import { Role } from '../../common/enums/role-enum';
 import { AuthService } from '../auth/auth.service';
 import { AuthTokens } from '../auth/interfaces/auth-token.interface';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
 
 type IdentityFields = Pick<
   CreateDriverUserAccount,
@@ -74,6 +77,14 @@ type IdentityFields = Pick<
   | 'password_hash'
   | 'email_verified_at'
 >;
+
+const RESET_TOKEN_TTL_SECONDS = 10 * 60;
+const RESET_SESSION_EXPIRED_MESSAGE =
+  'Your reset session expired. Please request a new code.';
+
+/** Only a hash of the reset token ever touches Redis. */
+const resetTokenKey = (token: string): string =>
+  `pwreset:token:${createHash('sha256').update(token).digest('hex')}`;
 
 @Injectable()
 export class DriverService {
@@ -238,13 +249,13 @@ export class DriverService {
   }
 
   // ---------------------------------------------------------------
-  // Forgot-password (3-step wizard)
-  //   1. the app collects the new password locally
-  //   2. requestPasswordResetOtp: sends a 6-digit code (SMS or email)
-  //   3. resetPassword: identity + code + new password in ONE request
+  // Forgot-password (3 steps)
+  //   1. requestPasswordResetOtp: sends a 6-digit code (SMS or email)
+  //   2. verifyPasswordResetOtp: checks the code, issues a reset token
+  //   3. resetPassword: reset token + new password
   //
-  // The password is changed only after the code is verified. Any OTP
-  // failure throws before the repository is touched.
+  // The OTP is spent in step 2, so the reset token is what proves to
+  // step 3 that step 2 was passed.
   // ---------------------------------------------------------------
 
   /**
@@ -273,13 +284,16 @@ export class DriverService {
     };
   }
 
-  async resetPassword(dto: ResetPasswordDto): Promise<void> {
+  /**
+   * Step 2: verifies the code. On success the code is spent and a
+   * single-use reset token is issued, which step 3 requires.
+   */
+  async verifyPasswordResetOtp(dto: VerifyOtpDto): Promise<ResetTokenResult> {
     const identity = this.pickResetIdentity(dto);
     const driver = await this.findPasswordResetTarget(identity);
     if (!driver) throw new BadRequestException(INVALID_CODE_MESSAGE);
 
-    // 6 digits is only 1,000,000 guesses, and this endpoint changes a
-    // password, so guesses are capped per account whatever the identity.
+    // 6 digits is only 1,000,000 guesses, so cap them per account.
     const attempts = await this.hitCounter(
       `pwreset:attempts:${driver.id}`,
       EMAIL_OTP_TTL_SECONDS,
@@ -300,22 +314,46 @@ export class DriverService {
       dto.otp_code,
     );
 
-    // Hash only AFTER the code is good, so unauthenticated callers can't
-    // make the server burn bcrypt time with random codes.
+    await this.redis.del(`pwreset:attempts:${driver.id}`);
+
+    const resetToken = randomBytes(32).toString('hex');
+    await this.redis.set(
+      resetTokenKey(resetToken),
+      driver.id,
+      'EX',
+      RESET_TOKEN_TTL_SECONDS,
+    );
+
+    return {
+      reset_token: resetToken,
+      expires_in_seconds: RESET_TOKEN_TTL_SECONDS,
+    };
+  }
+
+  /**
+   * Step 3: spends the reset token and sets the new password. Signs the
+   * driver out everywhere.
+   */
+  async resetPassword(dto: ResetPasswordDto): Promise<void> {
+    // GETDEL (Redis >= 6.2) reads and deletes atomically, so a token can
+    // never be used twice, even by two simultaneous requests.
+    const driverId = await this.redis.getdel(resetTokenKey(dto.reset_token));
+    if (!driverId) throw new BadRequestException(RESET_SESSION_EXPIRED_MESSAGE);
+
+    // Hash only AFTER the token is good, so unauthenticated callers can't
+    // make the server burn bcrypt time.
     const passwordHash = await bcrypt.hash(dto.new_password, BCRYPT_ROUNDS);
 
     let updated: boolean;
     try {
       updated = await this.driverRepository.resetPasswordAndRevokeSessions(
-        driver.id,
+        driverId,
         passwordHash,
       );
     } catch (error: unknown) {
       this.rethrowDbError(error, 'resetPassword');
     }
-    if (!updated) throw new BadRequestException(INVALID_CODE_MESSAGE);
-
-    await this.redis.del(`pwreset:attempts:${driver.id}`);
+    if (!updated) throw new BadRequestException(RESET_SESSION_EXPIRED_MESSAGE);
   }
 
   private async dispatchResetOtp(

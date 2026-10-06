@@ -5,10 +5,7 @@ import {
   PASSWORD_POLICY_MESSAGE,
 } from '../util/password-policty';
 
-export class ResetPasswordDto {
-  @Matches(/^[a-f0-9]{64}$/, { message: 'reset_token is invalid' })
-  reset_token!: string;
-
+export class UpdateDriverPasswordDto {
   @MaxLength(PASSWORD_MAX_LENGTH)
   @Matches(PASSWORD_PATTERN, { message: PASSWORD_POLICY_MESSAGE })
   new_password!: string;
