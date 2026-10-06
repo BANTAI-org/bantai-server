@@ -9,7 +9,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { DatabaseModule } from '../../database/database.module';
 import { EmailModule } from '../email/email.module';
 import { GoogleService } from './providers/google.service';
-
+import { RefreshCookieService } from './helpers/refresh-cookie.help';
 @Module({
   imports: [
     PassportModule.register({ defaultStrategy: 'jwt' }),
@@ -19,7 +19,19 @@ import { GoogleService } from './providers/google.service';
     EmailModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, AuthRepository, JwtStrategy, GoogleService],
-  exports: [AuthService, JwtStrategy, PassportModule, GoogleService],
+  providers: [
+    AuthService,
+    AuthRepository,
+    JwtStrategy,
+    GoogleService,
+    RefreshCookieService,
+  ],
+  exports: [
+    AuthService,
+    JwtStrategy,
+    PassportModule,
+    GoogleService,
+    RefreshCookieService,
+  ],
 })
 export class AuthModule {}

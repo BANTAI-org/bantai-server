@@ -6,15 +6,18 @@ import {
   Patch,
   Post,
   Req,
+  Res,
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
-import type { Request } from 'express';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/role.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { AuthTokens } from '../auth/interfaces/auth-token.interface';
+import { RefreshCookieService } from '../auth/helpers/refresh-cookie.help';
 import { DriverService } from './drivers.service';
 import { OtpRequestResult } from './interfaces/otp-result.interface';
 import { CreateDriverDto } from './dto/create-driver.dto';
@@ -23,26 +26,37 @@ import { PasswordResetIdentityDto } from './dto/password-reset-identity.dto';
 import { ResetPasswordDto } from './dto/password-reset.dto';
 import { UserIdType } from '../responders/types/user-id.types';
 
-type AuthenticatedRequest = Request & { user: JwtPayload };
+type AuthenticatedRequest = FastifyRequest & { user: JwtPayload };
 
 @Controller('drivers')
 export class DriverController {
-  constructor(private readonly driverService: DriverService) {}
+  constructor(
+    private readonly driverService: DriverService,
+    private readonly refreshCookie: RefreshCookieService,
+  ) {}
 
   /**
    * Public Endpoint: Driver Self-Registration.
-   * Unprotected because drivers register themselves during onboarding.
+   * Creates the account and signs the driver in, returning the same
+   * tokens as the sign-in endpoints (refresh token also set as a cookie).
    */
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   async register(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
     dto: CreateDriverDto,
-  ): Promise<UserIdType> {
-    // Stamped here until OTP layer is hooked into the controller
-    const phoneVerifiedAt = new Date();
+    @Res({ passthrough: true }) response: FastifyReply,
+  ): Promise<AuthTokens & UserIdType> {
+    const phoneVerifiedAt = new Date(); // TODO: replace with real OTP verification
 
-    return this.driverService.createDriver(dto, phoneVerifiedAt);
+    const result = await this.driverService.registerDriver(
+      dto,
+      phoneVerifiedAt,
+    );
+
+    this.refreshCookie.set(response, result.refreshToken);
+
+    return result;
   }
 
   /**
