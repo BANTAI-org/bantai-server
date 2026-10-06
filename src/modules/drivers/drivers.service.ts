@@ -62,6 +62,9 @@ import { OtpRequestResult } from './interfaces/otp-result.interface';
 import { hasChanges } from './util/has-changes.util';
 import { UserIdDTO } from './dto/user-id.dto';
 import { DutyStatusEnum } from './enums/duty-status.enum';
+import { Role } from '../../common/enums/role-enum';
+import { AuthService } from '../auth/auth.service';
+import { AuthTokens } from '../auth/interfaces/auth-token.interface';
 
 type IdentityFields = Pick<
   CreateDriverUserAccount,
@@ -83,6 +86,7 @@ export class DriverService {
     private readonly smsService: SmsService,
     private readonly emailOtpService: EmailOtpService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    private readonly authService: AuthService,
   ) {}
 
   async createDriver(
@@ -141,6 +145,46 @@ export class DriverService {
       );
     } catch (error: unknown) {
       this.rethrowDbError(error, 'createDriver');
+    }
+  }
+
+  /**
+   * Final step of the registration wizard: creates the driver, then
+   * signs them straight in. The person just proved who they are more
+   * strongly than a login would (SMS code plus password or social
+   * token), so asking them to sign in again adds friction and no
+   * security.
+   *
+   * Account creation and token issuing are separate steps on purpose.
+   * If issuing tokens fails after the account is committed, the
+   * driver is told so and can simply sign in, instead of seeing a
+   * failed registration for an account that exists.
+   *
+   * @param phoneVerifiedAt Set by the OTP layer after the code checks
+   *   out, never taken from the request body.
+   */
+  async registerDriver(
+    dto: CreateDriverDto,
+    phoneVerifiedAt: Date,
+  ): Promise<AuthTokens & UserIdType> {
+    const { id } = await this.createDriver(dto, phoneVerifiedAt);
+
+    try {
+      // Drivers belong to no command center, hence null.
+      const tokens = await this.authService.generateTokens(
+        id,
+        Role.DRIVER,
+        null,
+      );
+      return { id, ...tokens };
+    } catch (error: unknown) {
+      this.logger.error(
+        `Driver ${id} was created but signing them in failed`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw new InternalServerErrorException(
+        'Your account was created, but we could not sign you in. Please sign in.',
+      );
     }
   }
 
