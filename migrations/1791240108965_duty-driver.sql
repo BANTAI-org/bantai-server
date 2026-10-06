@@ -1,3 +1,4 @@
+-- 007
 -- Up Migration
 CREATE TYPE driver_duty AS ENUM ('on_duty', 'off_duty');
 

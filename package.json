@@ -32,7 +32,9 @@
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-fastify": "^11.1.29",
+    "@nestjs/platform-socket.io": "^11.2.7",
     "@nestjs/swagger": "^11.4.7",
+    "@nestjs/websockets": "^11.2.7",
     "@react-email/components": "^1.0.12",
     "@react-email/render": "^2.1.0",
     "apple-signin-auth": "^2.1.0",
@@ -51,7 +53,8 @@
     "react": "^19.3.0",
     "reflect-metadata": "^0.2.2",
     "resend": "^6.28.0",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "socket.io": "^4.8.4"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

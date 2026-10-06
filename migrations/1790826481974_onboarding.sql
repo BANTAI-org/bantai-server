@@ -1,5 +1,5 @@
 -- Up Migration
--- 003: driver onboarding fields
+-- 002: driver onboarding fields
 --
 -- Backs the Flutter driver app's 6-step registration wizard
 -- (personal details -> account & login -> license & operator ->

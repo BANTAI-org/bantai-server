@@ -1,5 +1,5 @@
 -- Up Migration
--- 006: extract user_identity table for multi-provider authentication
+-- 005: extract user_identity table for multi-provider authentication
 --
 -- Decouples authentication provider identities from user_account into a 1:N
 -- relation (user_identity). Allows users to link multiple login methods
