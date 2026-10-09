@@ -24,14 +24,17 @@ class EnvironmentVariables {
   @IsUrl({ require_tld: false })
   APP_URL!: string;
 
-  @IsUrl({ require_tld: false })
+  @IsString()
+  @IsNotEmpty()
   FRONTEND_URL!: string;
 
   @IsString()
   @IsNotEmpty()
   API_PREFIX!: string;
 
-  @IsUrl({ require_tld: false })
+  // @IsUrl({ require_tld: false })
+  @IsString()
+  @IsNotEmpty()
   CORS_ORIGIN!: string;
 
   // ---------------- Seeder ----------------

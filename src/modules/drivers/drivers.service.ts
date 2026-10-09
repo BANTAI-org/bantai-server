@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -8,7 +10,9 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { createHash, randomBytes } from 'node:crypto';
 import * as bcrypt from 'bcrypt';
+import type { Redis } from 'ioredis';
 import { DriverRepository } from './drivers.repository';
 import { CreateDriverDto } from './dto/create-driver.dto';
 import {
@@ -16,17 +20,54 @@ import {
   toDriverProfilePatch,
   toUserAccountPatch,
 } from './dto/patch-driver-profile.dto';
+import { PasswordResetIdentityDto } from './dto/password-reset-identity.dto';
+import { ResetPasswordDto } from './dto/password-reset.dto';
 import { CreateDriverProfileData } from './types/create-driver-profile.types';
 import { CreateDriverUserAccount } from './types/create-driver-account.type';
 import { DriverProfileDataRow } from './types/driver-profile-data-row.type';
 import { UserAccountPatch } from './types/patch-user-account.type';
+import {
+  DriverPasswordTarget,
+  ResetIdentity,
+} from './types/password-reset-types';
 import { UserIdType } from '../responders/types/user-id.types';
 import { AuthProviderEnum } from '../responders/enums/auth-provider.enum';
 import { ServiceProviderEnum } from '../responders/enums/service-provider.enum';
 import {
+  EMAIL_OTP_TTL_SECONDS,
+  EmailOtpService,
+} from '../email/email-otp.service';
+import { REDIS_CLIENT } from '../redis/provider/redis.provider';
+import { SmsService } from '../sms/sms.service';
+import {
   SOCIAL_IDENTITY_VERIFIERS,
   type SocialIdentityVerifiers,
 } from './types/social-identity-provider.type';
+import { isPastDate } from './util/is-past-date.util';
+import { isPgError } from './util/pg-error.util';
+import { OtpChannel } from './types/otp-channel.type';
+import {
+  BCRYPT_ROUNDS,
+  PG_UNIQUE_VIOLATION,
+  HOUR_SECONDS,
+  INVALID_CODE_MESSAGE,
+  PG_CHECK_VIOLATION,
+  PG_DATA_EXCEPTION_CLASS,
+  PG_NOT_NULL_VIOLATION,
+  RESET_MAX_SENDS_PER_HOUR,
+  RESET_MAX_VERIFY_ATTEMPTS,
+  RESET_OTP_PURPOSE,
+  RESET_RESEND_COOLDOWN_SECONDS,
+} from './util/otp-policey.util';
+import { OtpRequestResult } from './interfaces/otp-result.interface';
+import { ResetTokenResult } from './interfaces/result-token-result.interface';
+import { hasChanges } from './util/has-changes.util';
+import { UserIdDTO } from './dto/user-id.dto';
+import { DutyStatusEnum } from './enums/duty-status.enum';
+import { Role } from '../../common/enums/role-enum';
+import { AuthService } from '../auth/auth.service';
+import { AuthTokens } from '../auth/interfaces/auth-token.interface';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
 
 type IdentityFields = Pick<
   CreateDriverUserAccount,
@@ -37,29 +78,13 @@ type IdentityFields = Pick<
   | 'email_verified_at'
 >;
 
-const BCRYPT_ROUNDS = 12;
+const RESET_TOKEN_TTL_SECONDS = 10 * 60;
+const RESET_SESSION_EXPIRED_MESSAGE =
+  'Your reset session expired. Please request a new code.';
 
-const PG_UNIQUE_VIOLATION = '23505';
-const PG_CHECK_VIOLATION = '23514';
-const PG_NOT_NULL_VIOLATION = '23502';
-const PG_DATA_EXCEPTION_CLASS = '22';
-
-interface PgErrorLike {
-  code?: string;
-  constraint?: string;
-}
-
-function isPgError(error: unknown): error is PgErrorLike {
-  return typeof error === 'object' && error !== null && 'code' in error;
-}
-
-function hasChanges(patch: object): boolean {
-  return Object.values(patch).some((value) => value !== undefined);
-}
-
-function isPastDate(isoDate: string): boolean {
-  return new Date(`${isoDate}T00:00:00.000Z`).getTime() < Date.now();
-}
+/** Only a hash of the reset token ever touches Redis. */
+const resetTokenKey = (token: string): string =>
+  `pwreset:token:${createHash('sha256').update(token).digest('hex')}`;
 
 @Injectable()
 export class DriverService {
@@ -69,6 +94,10 @@ export class DriverService {
     private readonly driverRepository: DriverRepository,
     @Inject(SOCIAL_IDENTITY_VERIFIERS)
     private readonly socialVerifiers: SocialIdentityVerifiers,
+    private readonly smsService: SmsService,
+    private readonly emailOtpService: EmailOtpService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    private readonly authService: AuthService,
   ) {}
 
   async createDriver(
@@ -130,6 +159,46 @@ export class DriverService {
     }
   }
 
+  /**
+   * Final step of the registration wizard: creates the driver, then
+   * signs them straight in. The person just proved who they are more
+   * strongly than a login would (SMS code plus password or social
+   * token), so asking them to sign in again adds friction and no
+   * security.
+   *
+   * Account creation and token issuing are separate steps on purpose.
+   * If issuing tokens fails after the account is committed, the
+   * driver is told so and can simply sign in, instead of seeing a
+   * failed registration for an account that exists.
+   *
+   * @param phoneVerifiedAt Set by the OTP layer after the code checks
+   *   out, never taken from the request body.
+   */
+  async registerDriver(
+    dto: CreateDriverDto,
+    phoneVerifiedAt: Date,
+  ): Promise<AuthTokens & UserIdType> {
+    const { id } = await this.createDriver(dto, phoneVerifiedAt);
+
+    try {
+      // Drivers belong to no command center, hence null.
+      const tokens = await this.authService.generateTokens(
+        id,
+        Role.DRIVER,
+        null,
+      );
+      return { id, ...tokens };
+    } catch (error: unknown) {
+      this.logger.error(
+        `Driver ${id} was created but signing them in failed`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw new InternalServerErrorException(
+        'Your account was created, but we could not sign you in. Please sign in.',
+      );
+    }
+  }
+
   async updateProfile(
     userId: string,
     dto: PatchDriverProfileDto,
@@ -177,6 +246,224 @@ export class DriverService {
       throw new NotFoundException('Driver account not found');
     }
     return profile;
+  }
+
+  // ---------------------------------------------------------------
+  // Forgot-password (3 steps)
+  //   1. requestPasswordResetOtp: sends a 6-digit code (SMS or email)
+  //   2. verifyPasswordResetOtp: checks the code, issues a reset token
+  //   3. resetPassword: reset token + new password
+  //
+  // The OTP is spent in step 2, so the reset token is what proves to
+  // step 3 that step 2 was passed.
+  // ---------------------------------------------------------------
+
+  /**
+   * Always answers the same way, whether or not an account matches, so this
+   * can't be used to find out who is registered. The send runs in the
+   * background so response timing and provider errors can't leak that either.
+   */
+  async requestPasswordResetOtp(
+    dto: PasswordResetIdentityDto,
+  ): Promise<OtpRequestResult> {
+    const identity = this.pickResetIdentity(dto);
+    const driver = await this.findPasswordResetTarget(identity);
+
+    if (driver) {
+      void this.dispatchResetOtp(identity, driver).catch((error: unknown) => {
+        this.logger.error(
+          `Password-reset OTP could not be sent to driver ${driver.id}`,
+          error instanceof Error ? error.stack : undefined,
+        );
+      });
+    }
+
+    return {
+      expires_in_seconds: EMAIL_OTP_TTL_SECONDS,
+      resend_after_seconds: RESET_RESEND_COOLDOWN_SECONDS,
+    };
+  }
+
+  /**
+   * Step 2: verifies the code. On success the code is spent and a
+   * single-use reset token is issued, which step 3 requires.
+   */
+  async verifyPasswordResetOtp(dto: VerifyOtpDto): Promise<ResetTokenResult> {
+    const identity = this.pickResetIdentity(dto);
+    const driver = await this.findPasswordResetTarget(identity);
+    if (!driver) throw new BadRequestException(INVALID_CODE_MESSAGE);
+
+    // 6 digits is only 1,000,000 guesses, so cap them per account.
+    const attempts = await this.hitCounter(
+      `pwreset:attempts:${driver.id}`,
+      EMAIL_OTP_TTL_SECONDS,
+    );
+    if (attempts > RESET_MAX_VERIFY_ATTEMPTS) {
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          message: 'Too many incorrect attempts. Please request a new code.',
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    // Throws on a wrong, expired or reused code. Nothing below runs then.
+    await this.verifyResetCode(
+      this.resetChannelFor(identity, driver),
+      dto.otp_code,
+    );
+
+    await this.redis.del(`pwreset:attempts:${driver.id}`);
+
+    const resetToken = randomBytes(32).toString('hex');
+    await this.redis.set(
+      resetTokenKey(resetToken),
+      driver.id,
+      'EX',
+      RESET_TOKEN_TTL_SECONDS,
+    );
+
+    return {
+      reset_token: resetToken,
+      expires_in_seconds: RESET_TOKEN_TTL_SECONDS,
+    };
+  }
+
+  /**
+   * Step 3: spends the reset token and sets the new password. Signs the
+   * driver out everywhere.
+   */
+  async resetPassword(dto: ResetPasswordDto): Promise<void> {
+    // GETDEL (Redis >= 6.2) reads and deletes atomically, so a token can
+    // never be used twice, even by two simultaneous requests.
+    const driverId = await this.redis.getdel(resetTokenKey(dto.reset_token));
+    if (!driverId) throw new BadRequestException(RESET_SESSION_EXPIRED_MESSAGE);
+
+    // Hash only AFTER the token is good, so unauthenticated callers can't
+    // make the server burn bcrypt time.
+    const passwordHash = await bcrypt.hash(dto.new_password, BCRYPT_ROUNDS);
+
+    let updated: boolean;
+    try {
+      updated = await this.driverRepository.resetPasswordAndRevokeSessions(
+        driverId,
+        passwordHash,
+      );
+    } catch (error: unknown) {
+      this.rethrowDbError(error, 'resetPassword');
+    }
+    if (!updated) throw new BadRequestException(RESET_SESSION_EXPIRED_MESSAGE);
+  }
+
+  private async dispatchResetOtp(
+    identity: ResetIdentity,
+    driver: DriverPasswordTarget,
+  ): Promise<void> {
+    // Keyed by account id, so switching between id / email / phone can't
+    // get around the limits.
+    const cooldownKey = `pwreset:cooldown:${driver.id}`;
+    const claimed = await this.redis.set(
+      cooldownKey,
+      '1',
+      'EX',
+      RESET_RESEND_COOLDOWN_SECONDS,
+      'NX',
+    );
+    if (claimed === null) return;
+
+    const sends = await this.hitCounter(
+      `pwreset:sends:${driver.id}`,
+      HOUR_SECONDS,
+    );
+    if (sends > RESET_MAX_SENDS_PER_HOUR) return;
+
+    const channel = this.resetChannelFor(identity, driver);
+    try {
+      if (channel.type === 'sms') {
+        await this.smsService.sendOtp(channel.phone);
+      } else {
+        await this.emailOtpService.send(channel.email, RESET_OTP_PURPOSE);
+      }
+    } catch (error: unknown) {
+      // Nothing was delivered, so don't make them wait out the cooldown.
+      await this.redis.del(cooldownKey);
+      throw error;
+    }
+
+    // A fresh code gets a fresh guess budget.
+    await this.redis.del(`pwreset:attempts:${driver.id}`);
+  }
+
+  private async verifyResetCode(
+    channel: OtpChannel,
+    code: string,
+  ): Promise<void> {
+    if (channel.type === 'sms') {
+      await this.smsService.verifyOtp(channel.phone, code);
+      return;
+    }
+    const valid = await this.emailOtpService.verify(
+      channel.email,
+      RESET_OTP_PURPOSE,
+      code,
+    );
+    if (!valid) throw new BadRequestException(INVALID_CODE_MESSAGE);
+  }
+
+  /** Email -> email code. Phone -> SMS. Id -> SMS to the phone on file, else email. */
+  private resetChannelFor(
+    identity: ResetIdentity,
+    driver: DriverPasswordTarget,
+  ): OtpChannel {
+    if (identity.kind === 'email') {
+      return { type: 'email', email: driver.email.toLowerCase() };
+    }
+    if (identity.kind === 'm_number') {
+      return { type: 'sms', phone: identity.value };
+    }
+    return driver.m_number
+      ? { type: 'sms', phone: driver.m_number }
+      : { type: 'email', email: driver.email.toLowerCase() };
+  }
+
+  private pickResetIdentity(dto: PasswordResetIdentityDto): ResetIdentity {
+    const provided: ResetIdentity[] = [];
+    if (dto.id) provided.push({ kind: 'id', value: dto.id });
+    if (dto.email) provided.push({ kind: 'email', value: dto.email });
+    if (dto.m_number) provided.push({ kind: 'm_number', value: dto.m_number });
+
+    const [only] = provided;
+    if (provided.length !== 1 || !only) {
+      throw new BadRequestException(
+        'Provide exactly one of id, email or m_number.',
+      );
+    }
+    return only;
+  }
+
+  private async findPasswordResetTarget(
+    identity: ResetIdentity,
+  ): Promise<DriverPasswordTarget | null> {
+    try {
+      return await this.driverRepository.findDriverForPasswordReset(identity);
+    } catch (error: unknown) {
+      this.rethrowDbError(error, 'findDriverForPasswordReset');
+    }
+  }
+
+  /** INCR + EXPIRE NX in one MULTI, so a counter can never be left without a TTL. */
+  private async hitCounter(key: string, ttlSeconds: number): Promise<number> {
+    const results = await this.redis
+      .multi()
+      .incr(key)
+      .expire(key, ttlSeconds, 'NX')
+      .exec();
+    const count = results?.[0]?.[1];
+    if (typeof count !== 'number') {
+      throw new Error('Redis counter failed');
+    }
+    return count;
   }
 
   private async resolveIdentity(dto: CreateDriverDto): Promise<IdentityFields> {
@@ -272,5 +559,34 @@ export class DriverService {
       error instanceof Error ? error.stack : undefined,
     );
     throw new InternalServerErrorException();
+  }
+
+  async changeDriverStatus(dto: UserIdDTO): Promise<boolean> {
+    const { id } = dto;
+    try {
+      const currentDutyStatus =
+        await this.driverRepository.checkCurrentDutyStatus(id);
+
+      if (!currentDutyStatus) {
+        throw new NotFoundException('Account with id doesnt exist');
+      }
+
+      const new_duty =
+        currentDutyStatus === DutyStatusEnum.ON_DUTY
+          ? DutyStatusEnum.OFF_DUTY
+          : DutyStatusEnum.ON_DUTY;
+
+      const response = await this.driverRepository.changeDuty(id, new_duty);
+      return response;
+    } catch (error: unknown) {
+      this.logger.error(
+        'error in changing duty: ',
+        error instanceof Error ? error.stack : undefined,
+      );
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Unknown error occured');
+    }
   }
 }

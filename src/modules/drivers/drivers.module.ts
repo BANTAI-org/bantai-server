@@ -9,9 +9,11 @@ import {
   SocialIdentityVerifiers,
 } from './types/social-identity-provider.type';
 import { GoogleService } from '../auth/providers/google.service';
+import { SmsModule } from '../sms/sms.module';
+import { EmailModule } from '../email/email.module';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, SmsModule, EmailModule],
   controllers: [DriverController],
   providers: [
     DriverService,

@@ -1,62 +1,35 @@
 import {
   Injectable,
-  Inject,
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Resend } from 'resend';
-import { RESEND_CLIENT } from './providers/resend.provider'; // Update this path to match your structure
+import { BrevoProvider } from './providers/brevo.provider';
 
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
 
   constructor(
-    @Inject(RESEND_CLIENT) private readonly resend: Resend,
+    private readonly brevoProvider: BrevoProvider,
     private readonly configService: ConfigService,
   ) {}
 
   /**
-   * Low-level send. Purpose-specific methods below should be preferred
-   * so the copy/branding for each email type lives in one place.
-   *
-   * The sender address comes from EMAIL_FROM, which MUST match your
-   * newly verified domain in Resend.
+   * Low-level send method. Delegates straight to Brevo REST API.
    *
    * @param to Recipient email address.
    * @param subject Email subject line.
    * @param html Full HTML body.
-   * @throws {InternalServerErrorException} If the Resend API fails.
    */
-  async sendEmail(to: string, subject: string, html: string) {
-    const from = this.configService.getOrThrow<string>('EMAIL_FROM');
-
+  async sendEmail(to: string, subject: string, html: string): Promise<void> {
     try {
-      const { data, error } = await this.resend.emails.send({
-        from,
-        to,
-        subject,
-        html,
-      });
-
-      // Resend returns API errors (e.g., 403, 429) inside the resolved object,
-      // it does not throw an exception for them. We must check this manually.
-      if (error) {
-        this.logger.error(
-          `Resend failed to send "${subject}" to ${to}: ${error.message}`,
-        );
-        throw new InternalServerErrorException(
-          `Email failed to send: ${error.message}`,
-        );
-      }
-
-      return data;
+      await this.brevoProvider.sendEmail(to, subject, html);
     } catch (err: unknown) {
       // This only catches network-level failures or SDK crashes
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(
-        `Unexpected error sending "${subject}" to ${to}: ${message}`,
+        `Brevo provider failed to send "${subject}" to ${to}: ${message}`,
       );
       throw new InternalServerErrorException(
         `Email failed to send: ${message}`,
@@ -65,11 +38,7 @@ export class EmailService {
   }
 
   /**
-   * Builds an absolute, correctly-encoded link back to the app using
-   * FRONTEND_URL from config.
-   *
-   * @param path Route path, e.g. '/activate' or '/reset-password'.
-   * @param rawToken The UNHASHED token.
+   * Builds an absolute link back to the frontend application using FRONTEND_URL.
    */
   private buildActionUrl(path: string, rawToken: string): string {
     const baseUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
@@ -79,10 +48,7 @@ export class EmailService {
   }
 
   /**
-   * Sends the account-activation email containing a single-use link.
-   *
-   * @param to Recipient email address (the newly provisioned user).
-   * @param rawToken Unhashed activation token.
+   * Sends account-activation email with single-use token link.
    */
   async sendActivationEmail(to: string, rawToken: string): Promise<void> {
     const activationUrl = this.buildActionUrl('/activate', rawToken);
@@ -98,10 +64,7 @@ export class EmailService {
   }
 
   /**
-   * Sends the password-reset email containing a single-use link.
-   *
-   * @param to Recipient email address.
-   * @param rawToken Unhashed password-reset token.
+   * Sends password-reset email with single-use token link.
    */
   async sendPasswordResetEmail(to: string, rawToken: string): Promise<void> {
     const resetUrl = this.buildActionUrl('/reset-password', rawToken);
@@ -113,5 +76,20 @@ export class EmailService {
     `;
 
     await this.sendEmail(to, 'Reset your BANTAI password', html);
+  }
+
+  async sendOtpEmail(
+    to: string,
+    code: string,
+    expiresInMinutes: number,
+  ): Promise<void> {
+    const html = `
+    <p>Your BANTAI verification code is:</p>
+    <p style="font-size:28px;letter-spacing:6px;"><strong>${code}</strong></p>
+    <p>This code will expire in ${expiresInMinutes} minutes. Never share it with anyone. BANTAI dispatch will never ask you for it.</p>
+    <p>If you didn't request this, you can safely ignore this email.</p>
+  `;
+
+    await this.sendEmail(to, 'Your BANTAI verification code', html);
   }
 }

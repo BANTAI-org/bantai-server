@@ -26,7 +26,6 @@ import { EmergencyContactDto } from './emergency-contact.dto';
 
 const NAME_PATTERN = /^[\p{L}\s-]+$/u;
 const MOBILE_PATTERN = /^\+639\d{9}$/;
-const OTP_PATTERN = /^\d{6}$/;
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const trim = ({ value }: { value: unknown }): unknown =>
@@ -254,6 +253,4 @@ export class CreateDriverDto {
   // ---------------------------------------------------------------
   // Screen 6: Phone verification -> this is nothing, not required
   // ---------------------------------------------------------------
-  @Matches(OTP_PATTERN, { message: 'otp_code must be a 6-digit code' })
-  otp_code!: string;
 }

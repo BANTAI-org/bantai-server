@@ -8,6 +8,13 @@ import { Queryable } from './util/queryable.utility';
 import { DriverProfilePatch } from './types/patch-driver-identity.types';
 import { UserAccountPatch } from './types/patch-user-account.type';
 import { DriverProfileDataRow } from './types/driver-profile-data-row.type';
+import {
+  DriverPasswordTarget,
+  ResetIdentity,
+  ResetIdentityKind,
+} from './types/password-reset-types';
+import { DutyStatusEnum } from './enums/duty-status.enum';
+import { DutyStatusRow } from './interfaces/duty-status.interface';
 
 /**
  * The ONLY column names a patch can ever put into a SQL string. The
@@ -40,6 +47,17 @@ const PROFILE_PATCHABLE_COLUMNS: readonly (keyof DriverProfilePatch)[] = [
   'vehicle_color',
   'medical_conditions',
 ];
+
+/**
+ * The only SQL fragments the forgot-password lookup can use. The identity
+ * kind picks one of these; the user-supplied value only ever travels as
+ * the $1 parameter, never inside the SQL text.
+ */
+const PASSWORD_RESET_LOOKUP: Record<ResetIdentityKind, string> = {
+  id: 'id = $1',
+  email: 'lower(email) = $1',
+  m_number: 'm_number = $1',
+};
 
 /**
  * The driver's profile: user_account + d_profile, matching DriverProfileDataRow.
@@ -300,5 +318,71 @@ export class DriverRepository {
     }
 
     return { sets, paramIndex };
+  }
+
+  // ---------------------------------------------------------------
+  // Forgot-password
+  // ---------------------------------------------------------------
+
+  /**
+   * The live driver behind an id, email or phone number, but only if they
+   * have a password to reset. Soft-deleted accounts and social-only
+   * (Google/Apple) accounts return null.
+   */
+  async findDriverForPasswordReset(
+    identity: ResetIdentity,
+  ): Promise<DriverPasswordTarget | null> {
+    const { rows } = await this.db.query<DriverPasswordTarget>(
+      `SELECT id, email, m_number
+       FROM user_account
+       WHERE role = $2
+         AND deleted_at IS NULL
+         AND password_hash IS NOT NULL
+         AND ${PASSWORD_RESET_LOOKUP[identity.kind]}
+       LIMIT 1`,
+      [identity.value, Role.DRIVER],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Sets the new password hash and signs the driver out everywhere (revokes
+   * every live refresh session), in ONE transaction. Unlike updatePassword,
+   * this is the account-recovery path. Returns false if no live driver
+   * matched, in which case nothing changed.
+   */
+  async resetPasswordAndRevokeSessions(
+    id: string,
+    passwordHash: string,
+  ): Promise<boolean> {
+    return this.db.withTransaction(async (client) => {
+      const { rows } = await client.query<{ id: string }>(
+        `UPDATE user_account SET password_hash = $1
+         WHERE id = $2 AND role = $3 AND deleted_at IS NULL
+         RETURNING id`,
+        [passwordHash, id, Role.DRIVER],
+      );
+      if (rows.length === 0) return false;
+
+      await client.query(
+        `UPDATE user_session SET is_revoked = true
+         WHERE user_id = $1 AND is_revoked = false`,
+        [id],
+      );
+      return true;
+    });
+  }
+
+  async checkCurrentDutyStatus(id: string): Promise<DutyStatusEnum | null> {
+    const sql = 'SELECT duty_status FROM d_profile WHERE user_id = $1';
+    const result = await this.db.query<DutyStatusRow>(sql, [id]);
+
+    return result.rows[0]?.duty_status ?? null;
+  }
+
+  async changeDuty(id: string, new_status: DutyStatusEnum) {
+    const sql = 'UPDATE d_profile SET duty_status = $1 WHERE user_id = $2';
+    const result = await this.db.query(sql, [new_status, id]);
+    return result.rowCount === 1;
   }
 }
