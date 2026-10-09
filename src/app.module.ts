@@ -12,6 +12,7 @@ import { DriverModule } from './modules/drivers/drivers.module';
 import { SmsModule } from './modules/sms/sms.module';
 import { RedisModule } from './modules/redis/redis.module';
 import { IncidentModule } from './modules/incidents/incidents.module';
+import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { IncidentModule } from './modules/incidents/incidents.module';
     SmsModule,
     RedisModule,
     IncidentModule,
+    AuditLogsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
