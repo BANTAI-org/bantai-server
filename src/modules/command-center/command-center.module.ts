@@ -4,11 +4,10 @@ import { CommandCenterService } from './command-center.service';
 import { CommandCenterRepository } from './command-center.repository';
 import { DatabaseModule } from '../../database/database.module';
 import { EmailModule } from '../email/email.module';
-import { EmailService } from '../email/email.service';
 
 @Module({
   imports: [DatabaseModule, EmailModule],
   controllers: [CommandCenterController],
-  providers: [CommandCenterService, CommandCenterRepository, EmailService],
+  providers: [CommandCenterService, CommandCenterRepository],
 })
 export class CommandCenterModule {}
