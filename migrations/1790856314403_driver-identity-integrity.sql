@@ -1,6 +1,6 @@
+-- 003: identity integrity for self-registered drivers
+
 -- Up Migration
--- 004: identity integrity for self-registered drivers
---
 -- Closes three gaps found when cross-checking the driver registration flow
 -- (DriverService / DriverRepository) against init + 003:
 --

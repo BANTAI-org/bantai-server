@@ -108,6 +108,17 @@ export class ResponderRepository {
     );
   }
 
+  async findCommandCenterIdByUserId(userId: string): Promise<string | null> {
+    const { rows } = await this.db.query<{ command_center_id: string }>(
+      `SELECT command_center_id 
+     FROM user_account 
+     WHERE id = $1 AND deleted_at IS NULL`,
+      [userId],
+    );
+
+    return rows[0]?.command_center_id ?? null;
+  }
+
   async setOffDutyAvailability(
     id: string,
     location: GeoPoint,

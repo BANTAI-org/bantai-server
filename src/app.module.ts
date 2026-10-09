@@ -11,6 +11,7 @@ import { RespondersModule } from './modules/responders/responders.module';
 import { DriverModule } from './modules/drivers/drivers.module';
 import { SmsModule } from './modules/sms/sms.module';
 import { RedisModule } from './modules/redis/redis.module';
+import { IncidentModule } from './modules/incidents/incidents.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { RedisModule } from './modules/redis/redis.module';
     DriverModule,
     SmsModule,
     RedisModule,
+    IncidentModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -36,9 +36,6 @@ export class EmailService {
     }
   }
 
-  /**
-   * Builds an absolute link back to the frontend application using FRONTEND_URL.
-   */
   private buildActionUrl(path: string, rawToken: string): string {
     const baseUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
     const url = new URL(path, baseUrl);
@@ -46,9 +43,6 @@ export class EmailService {
     return url.toString();
   }
 
-  /**
-   * Sends account-activation email with single-use token link.
-   */
   async sendActivationEmail(to: string, rawToken: string): Promise<void> {
     const activationUrl = this.buildActionUrl('/activate', rawToken);
 
@@ -62,9 +56,6 @@ export class EmailService {
     await this.sendEmail(to, 'Activate your BANTAI account', html);
   }
 
-  /**
-   * Sends password-reset email with single-use token link.
-   */
   async sendPasswordResetEmail(to: string, rawToken: string): Promise<void> {
     const resetUrl = this.buildActionUrl('/reset-password', rawToken);
 

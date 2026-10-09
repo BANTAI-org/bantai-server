@@ -1,3 +1,4 @@
+-- 006
 -- Up Migration
 -- Responder shift timer: when a responder's on-duty shift ends automatically.
 --
