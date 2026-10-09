@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
 import { AuditLogsRepository } from './audit-logs.repository';
 import { CreateAuditLogInput } from './types/create-audit.type';
 import { PaginatedAuditLogs } from './interfaces/paginated-audit-logs.interface';
@@ -14,23 +18,28 @@ export class AuditLogsService {
   }
 
   async getAuditLog(
-    commandCenterId: string,
     id: string,
     query?: GetSingleAuditQueryDto,
   ): Promise<SystemAuditLogEntity> {
-    const auditLog = await this.auditLogsRepository.get(
-      commandCenterId,
-      id,
-      query?.createdAt,
-    );
-
-    if (!auditLog) {
-      throw new NotFoundException(
-        `Audit log with ID "${id}" not found for Command Center "${commandCenterId}".`,
+    try {
+      const commandCenterId =
+        await this.auditLogsRepository.getCommandCenterIdOnId(id);
+      const auditLog = await this.auditLogsRepository.get(
+        commandCenterId,
+        id,
+        query?.createdAt,
       );
-    }
 
-    return auditLog;
+      if (!auditLog) {
+        throw new NotFoundException(
+          `Audit log with ID "${id}" not found for Command Center "${commandCenterId}".`,
+        );
+      }
+
+      return auditLog;
+    } catch (error: unknown) {
+      throw new InternalServerErrorException('hello');
+    }
   }
 
   async getAllAuditLogs(

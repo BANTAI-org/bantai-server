@@ -15,10 +15,10 @@ export class AuditLogsController {
   @Get()
   @Roles(Role.ADMIN, Role.SUPER)
   async getAll(
-    @Param('commandCenterId', ParseUUIDPipe) commandCenterId: string,
+    @CurrentUser('sub') userId: string,
     @Query() query: GetAuditLogsQueryDto,
   ): Promise<PaginatedAuditLogs> {
-    return this.auditLogsService.getAllAuditLogs(commandCenterId, query);
+    return this.auditLogsService.getAllAuditLogs(userId, query);
   }
 
   @Get(':id')
@@ -28,6 +28,6 @@ export class AuditLogsController {
     @Query() query: GetSingleAuditQueryDto,
     @CurrentUser('sub') userId: string,
   ): Promise<SystemAuditLogEntity> {
-    return this.auditLogsService.getAuditLog(commandCenterId, userId, query);
+    return this.auditLogsService.getAuditLog(userId, query);
   }
 }

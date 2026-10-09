@@ -5,6 +5,7 @@ import { SystemAuditLogEntity } from './interfaces/system-audit-logs-entity.inte
 import { AuditCursor } from './interfaces/audit-cursor.interface';
 import { PaginatedAuditLogs } from './interfaces/paginated-audit-logs.interface';
 import { GetAuditLogsParams } from './interfaces/get-audit-logs-params.interface';
+import { commandCenterId } from './types/command-center-id.types';
 
 @Injectable()
 export class AuditLogsRepository {
@@ -145,5 +146,11 @@ export class AuditLogsRepository {
       data: rows,
       nextCursor,
     };
+  }
+  async getCommandCenterIdOnId(id: string): Promise<string> {
+    const sql = 'SELECT id FROM command_center WHERE id = $1';
+
+    const result = await this.db.query<commandCenterId>(sql, [id]);
+    return result.rows[0]?.id;
   }
 }
