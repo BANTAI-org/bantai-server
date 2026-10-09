@@ -8,7 +8,7 @@ import { Roles } from '../../common/decorators/role.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
-@Controller('command-centers/:commandCenterId/audit-logs')
+@Controller('command-centers/audit-logs')
 export class AuditLogsController {
   constructor(private readonly auditLogsService: AuditLogsService) {}
 
