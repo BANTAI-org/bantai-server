@@ -26,6 +26,7 @@ export class EmailService {
     try {
       await this.brevoProvider.sendEmail(to, subject, html);
     } catch (err: unknown) {
+      // This only catches network-level failures or SDK crashes
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(
         `Brevo provider failed to send "${subject}" to ${to}: ${message}`,
