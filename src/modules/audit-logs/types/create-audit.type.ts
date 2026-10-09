@@ -1,4 +1,4 @@
-import { SystemAuditLogEntity } from './interfaces/system-audit-logs-entity.interface';
+import { SystemAuditLogEntity } from '../interfaces/system-audit-logs-entity.interface';
 
 export type CreateAuditLogInput = Omit<
   SystemAuditLogEntity,

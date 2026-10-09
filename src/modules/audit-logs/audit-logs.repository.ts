@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
-import { CreateAuditLogInput } from './create-audit.type';
+import { CreateAuditLogInput } from './types/create-audit.type';
 import { SystemAuditLogEntity } from './interfaces/system-audit-logs-entity.interface';
 import { AuditCursor } from './interfaces/audit-cursor.interface';
 import { PaginatedAuditLogs } from './interfaces/paginated-audit-logs.interface';

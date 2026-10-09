@@ -1,4 +1,4 @@
-import { AuditAction } from '../audit-action.enum';
+import { AuditAction } from '../enums/audit-action.enum';
 export interface SystemAuditLogEntity<
   TOld = Record<string, unknown>,
   TNew = Record<string, unknown>,

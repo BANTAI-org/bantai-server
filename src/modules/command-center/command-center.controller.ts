@@ -12,7 +12,6 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import type { Request } from 'express';
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { CommandCenterService } from './command-center.service';
@@ -23,6 +22,7 @@ import { ResponderTableRow } from './interfaces/responder-tb.interface';
 import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { Roles } from '../../common/decorators/role.decorator';
 import { Role } from '../../common/enums/role-enum';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 type AuthenticatedRequest = Request & { user: JwtPayload };
 
@@ -64,12 +64,9 @@ export class CommandCenterController {
   @Roles(Role.SUPER, Role.ADMIN)
   async listResponders(
     @Param('centerId', ParseUUIDPipe) centerId: string,
-    @Req() req: AuthenticatedRequest,
+    @CurrentUser('sub') userId: string,
   ): Promise<ResponderTableRow[]> {
-    return this.commandCenterService.getBranchResponders(
-      req.user.sub,
-      centerId,
-    );
+    return this.commandCenterService.getBranchResponders(userId, centerId);
   }
 
   @Patch(':centerId/responders/:responderId/deactivate')
@@ -78,10 +75,10 @@ export class CommandCenterController {
   async deactivateResponder(
     @Param('centerId', ParseUUIDPipe) centerId: string,
     @Param('responderId', ParseUUIDPipe) responderId: string,
-    @Req() req: AuthenticatedRequest,
+    @CurrentUser('sub') userId: string,
   ): Promise<void> {
     return this.commandCenterService.deactivateResponder(
-      req.user.sub,
+      userId,
       centerId,
       responderId,
     );
