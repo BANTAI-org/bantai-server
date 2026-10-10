@@ -1,4 +1,4 @@
-import { IsOptional, IsDate } from 'class-validator';
+import { IsOptional, IsDate, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class GetSingleAuditQueryDto {
@@ -6,4 +6,8 @@ export class GetSingleAuditQueryDto {
   @Type(() => Date)
   @IsDate()
   createdAt?: Date;
+
+  @IsOptional()
+  @IsString()
+  commandCenterId?: string;
 }

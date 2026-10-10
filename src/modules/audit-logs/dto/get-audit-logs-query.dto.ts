@@ -12,4 +12,8 @@ export class GetAuditLogsQueryDto {
   @IsOptional()
   @IsString()
   cursor?: string;
+
+  @IsOptional()
+  @IsString()
+  commandCenterId?: string;
 }
