@@ -112,12 +112,13 @@ export class DriverController {
 
   @Patch('duty')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.DRIVER)
   async changeDuty(
     @CurrentUser('sub') userId: string,
     @Body() dto: ChangeDutyDto,
   ) {
-    this.logger.debug( `received user id: ${userId}`)
+    this.logger.debug(`received user id: ${userId}`);
     return this.driverService.setDutyStatus(userId, dto);
   }
 }
