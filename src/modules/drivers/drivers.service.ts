@@ -62,12 +62,11 @@ import {
 import { OtpRequestResult } from './interfaces/otp-result.interface';
 import { ResetTokenResult } from './interfaces/result-token-result.interface';
 import { hasChanges } from './util/has-changes.util';
-import { UserIdDTO } from './dto/user-id.dto';
-import { DutyStatusEnum } from './enums/duty-status.enum';
 import { Role } from '../../common/enums/role-enum';
 import { AuthService } from '../auth/auth.service';
 import { AuthTokens } from '../auth/interfaces/auth-token.interface';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { ChangeDutyDto } from './dto/change-duty-driver.dto';
 
 type IdentityFields = Pick<
   CreateDriverUserAccount,
@@ -566,32 +565,15 @@ export class DriverService {
     return driverProfile ?? null;
   }
 
-  async changeDriverStatus(dto: UserIdDTO): Promise<boolean> {
-    const { id } = dto;
-    try {
-      const currentDutyStatus =
-        await this.driverRepository.checkCurrentDutyStatus(id);
-
-      if (!currentDutyStatus) {
-        throw new NotFoundException('Account with id doesnt exist');
-      }
-
-      const new_duty =
-        currentDutyStatus === DutyStatusEnum.ON_DUTY
-          ? DutyStatusEnum.OFF_DUTY
-          : DutyStatusEnum.ON_DUTY;
-
-      const response = await this.driverRepository.changeDuty(id, new_duty);
-      return response;
-    } catch (error: unknown) {
-      this.logger.error(
-        'error in changing duty: ',
-        error instanceof Error ? error.stack : undefined,
-      );
-      if (error instanceof NotFoundException) {
-        throw error;
-      }
-      throw new InternalServerErrorException('Unknown error occured');
+  async setDutyStatus(userId: string, dto: ChangeDutyDto) {
+    const result = await this.driverRepository.setDuty(
+      userId,
+      dto.duty_status,
+      dto.shift_hours ?? null,
+    );
+    if (!result) {
+      throw new NotFoundException('Driver account not found');
     }
+    return result;
   }
 }

@@ -29,6 +29,7 @@ import { ResetPasswordDto } from './dto/password-reset.dto';
 import type { UserIdType } from '../responders/types/user-id.types';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { DriverProfileDataRow } from './types/driver-profile-data-row.type';
+import { ChangeDutyDto } from './dto/change-duty-driver.dto';
 
 @Controller('drivers')
 export class DriverController {
@@ -107,5 +108,15 @@ export class DriverController {
   ): Promise<DriverProfileDataRow | null> {
     this.logger.debug(`received user id: ${userId}`);
     return this.driverService.getDriverProfile(userId);
+  }
+
+  @Patch('duty')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.DRIVER)
+  async changeDuty(
+    @CurrentUser('sub') userId: string,
+    @Body() dto: ChangeDutyDto,
+  ) {
+    return this.driverService.setDutyStatus(userId, dto);
   }
 }

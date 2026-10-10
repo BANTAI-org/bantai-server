@@ -14,7 +14,6 @@ import {
   ResetIdentityKind,
 } from './types/password-reset-types';
 import { DutyStatusEnum } from './enums/duty-status.enum';
-import { DutyStatusRow } from './interfaces/duty-status.interface';
 
 /**
  * The ONLY column names a patch can ever put into a SQL string. The
@@ -373,16 +372,26 @@ export class DriverRepository {
     });
   }
 
-  async checkCurrentDutyStatus(id: string): Promise<DutyStatusEnum | null> {
-    const sql = 'SELECT duty_status FROM d_profile WHERE user_id = $1';
-    const result = await this.db.query<DutyStatusRow>(sql, [id]);
-
-    return result.rows[0]?.duty_status ?? null;
-  }
-
-  async changeDuty(id: string, new_status: DutyStatusEnum) {
-    const sql = 'UPDATE d_profile SET duty_status = $1 WHERE user_id = $2';
-    const result = await this.db.query(sql, [new_status, id]);
-    return result.rowCount === 1;
+  async setDuty(
+    id: string,
+    status: DutyStatusEnum,
+    shiftHours: number | null,
+  ): Promise<{ dutyStatus: DutyStatusEnum; shiftEndsAt: Date | null } | null> {
+    const sql = `
+    UPDATE d_profile
+    SET duty_status = $2::driver_duty,
+        shift_ends_at = CASE
+          WHEN $2::driver_duty = 'on_duty'
+          THEN now() + ($3::int * interval '1 hour')
+          ELSE NULL
+        END
+    WHERE user_id = $1
+    RETURNING duty_status AS "dutyStatus", shift_ends_at AS "shiftEndsAt"
+  `;
+    const result = await this.db.query<{
+      dutyStatus: DutyStatusEnum;
+      shiftEndsAt: Date | null;
+    }>(sql, [id, status, shiftHours]);
+    return result.rows[0] ?? null;
   }
 }
