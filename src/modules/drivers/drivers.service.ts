@@ -561,8 +561,7 @@ export class DriverService {
     throw new InternalServerErrorException();
   }
 
-  async getDriverProfile(dto: UserIdDTO): Promise<DriverProfileDataRow | null> {
-    const { id } = dto;
+  async getDriverProfile(id: string): Promise<DriverProfileDataRow | null> {
     const driverProfile = await this.driverRepository.findProfileById(id);
     return driverProfile ?? null;
   }

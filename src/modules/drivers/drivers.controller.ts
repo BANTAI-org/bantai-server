@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   Patch,
   Post,
   Res,
@@ -35,6 +36,7 @@ export class DriverController {
     private readonly driverService: DriverService,
     private readonly refreshCookie: RefreshCookieService,
   ) {}
+  logger = new Logger(DriverController.name);
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
@@ -101,8 +103,9 @@ export class DriverController {
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.DRIVER)
   async getDriverUserProfile(
-    @CurrentUser('sub') userId: UserIdType,
+    @CurrentUser('sub') userId: string,
   ): Promise<DriverProfileDataRow | null> {
+    this.logger.debug(`received user id: ${userId}`);
     return this.driverService.getDriverProfile(userId);
   }
 }
