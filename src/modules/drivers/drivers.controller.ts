@@ -1,21 +1,20 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Patch,
   Post,
-  Req,
   Res,
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
-import type { FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyReply } from 'fastify';
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/role.decorator';
 import { Role } from '../../common/enums/role-enum';
-import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { AuthTokens } from '../auth/interfaces/auth-token.interface';
 import { RefreshCookieService } from '../auth/helpers/refresh-cookie.help';
 import { DriverService } from './drivers.service';
@@ -26,9 +25,9 @@ import { PatchDriverProfileDto } from './dto/patch-driver-profile.dto';
 import { PasswordResetIdentityDto } from './dto/password-reset-identity.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResetPasswordDto } from './dto/password-reset.dto';
-import { UserIdType } from '../responders/types/user-id.types';
-
-type AuthenticatedRequest = FastifyRequest & { user: JwtPayload };
+import type { UserIdType } from '../responders/types/user-id.types';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { DriverProfileDataRow } from './types/driver-profile-data-row.type';
 
 @Controller('drivers')
 export class DriverController {
@@ -63,9 +62,8 @@ export class DriverController {
   async updateProfile(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
     dto: PatchDriverProfileDto,
-    @Req() req: AuthenticatedRequest,
+    @CurrentUser('sub') userId: string,
   ) {
-    const userId = req.user.sub;
     const phoneVerifiedAt = dto.m_number ? new Date() : undefined;
 
     return this.driverService.updateProfile(userId, dto, phoneVerifiedAt);
@@ -96,5 +94,15 @@ export class DriverController {
     dto: ResetPasswordDto,
   ): Promise<void> {
     return this.driverService.resetPassword(dto);
+  }
+
+  @Get()
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(Role.DRIVER)
+  async getDriverUserProfile(
+    @CurrentUser('sub') userId: UserIdType,
+  ): Promise<DriverProfileDataRow | null> {
+    return this.driverService.getDriverProfile(userId);
   }
 }
