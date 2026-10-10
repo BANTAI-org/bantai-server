@@ -117,6 +117,7 @@ export class DriverController {
     @CurrentUser('sub') userId: string,
     @Body() dto: ChangeDutyDto,
   ) {
+    this.logger.debug( `received user id: ${userId}`)
     return this.driverService.setDutyStatus(userId, dto);
   }
 }
