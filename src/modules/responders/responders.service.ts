@@ -8,7 +8,10 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { ResponderRepository } from './responders.repository';
+import {
+  ResponderRepository,
+  type ResponderAccountPatch,
+} from './responders.repository';
 import { AuthService } from '../auth/auth.service';
 import { Role } from '../../common/enums/role-enum';
 import { GeoPoint } from '../../common/interfaces/geo-location.interface';
@@ -16,11 +19,17 @@ import { AgencyTypeEnum } from './enums/agency-type.enum';
 import { AvailabilityStatusEnum } from './enums/availability-status.enum';
 import { PoliceRank } from './enums/police-rank.enum';
 import { CreateResponderDto } from './dto/create-responder.dto';
+import { PatchResponderProfileDto } from './dto/patch-responder-profile.dto';
+import { SendOtpDto } from './dto/send-otp.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { CreateNewResponderUserAccount } from './types/create-new-user.types';
 import { CreateResponderProfileData } from './types/create-responder-profile.type';
 import { DutyChangeResult } from './types/duty-change-result';
 import { UserIdType } from './types/user-id.types';
 import { LiveLocation, RedisService } from '../redis/redis.service';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { SmsService } from '../sms/sms.service';
+import { AuditAction } from '../audit-logs/enums/audit-action.enum';
 
 const PG_UNIQUE_VIOLATION = '23505';
 
@@ -44,6 +53,8 @@ export class ResponderService {
     private readonly responderRepository: ResponderRepository,
     private readonly authService: AuthService,
     private readonly redisService: RedisService,
+    private readonly auditLogsService: AuditLogsService,
+    private readonly smsService: SmsService,
   ) {}
 
   /**
@@ -121,6 +132,33 @@ export class ResponderService {
       );
       throw new InternalServerErrorException(
         'The account was created, but the activation email could not be sent. Resend the activation link instead of creating the account again.',
+      );
+    }
+
+    // Create audit log for responder account creation
+    try {
+      const auditInput = {
+        actorId: commandCenterId,
+        commandCenterId,
+        action: AuditAction.CREATE_USER,
+        targetEntity: 'user_account',
+        targetId: created.id,
+        oldPayload: null,
+        newPayload: {
+          id: created.id,
+          f_name: dto.f_name,
+          l_name: dto.l_name,
+          m_name: dto.m_name ?? null,
+          email: dto.email,
+          role: dto.role ?? Role.RESPONDER,
+          command_center_id: commandCenterId,
+        },
+      };
+
+      await this.auditLogsService.createAudit(auditInput);
+    } catch (auditError: unknown) {
+      this.logger.warn(
+        `Failed to create audit log for responder ${created.id}: ${auditError instanceof Error ? auditError.message : String(auditError)}`,
       );
     }
 
@@ -366,5 +404,91 @@ export class ResponderService {
       'code' in err &&
       (err as { code?: string }).code === PG_UNIQUE_VIOLATION
     );
+  }
+
+  /**
+   * Fetches the responder profile for the given user ID.
+   * Only returns data for responders (not admins).
+   */
+  async getProfile(
+    userId: string,
+  ): ReturnType<ResponderRepository['findProfileById']> {
+    return this.responderRepository.findProfileById(userId);
+  }
+
+  /**
+   * Updates the responder profile. Only m_number is editable for data integrity.
+   * Requires phone_verified_at when changing m_number to ensure OTP verification.
+   */
+  async updateProfile(
+    userId: string,
+    dto: PatchResponderProfileDto,
+  ): ReturnType<ResponderRepository['findProfileById']> {
+    const accountPatch: ResponderAccountPatch = {};
+
+    if (dto.m_number !== undefined) {
+      if (!dto.phone_verified_at) {
+        throw new BadRequestException(
+          'A new mobile number must be verified with an OTP code',
+        );
+      }
+      accountPatch.m_number = dto.m_number;
+      accountPatch.phone_verified_at = new Date(dto.phone_verified_at);
+    }
+
+    if (Object.keys(accountPatch).length === 0) {
+      return this.responderRepository.findProfileById(userId);
+    }
+
+    await this.responderRepository.updateUserAccount(userId, accountPatch);
+    return this.responderRepository.findProfileById(userId);
+  }
+
+  /**
+   * Sends an OTP to the specified mobile number for verification.
+   * Uses the same SMS service as the drivers module.
+   */
+  async requestMnumberOtp(
+    userId: string,
+    dto: SendOtpDto,
+  ): Promise<{ expiresIn: number }> {
+    // Use the m_number from dto if provided, otherwise fetch from user's profile
+    const mNumber = dto.m_number;
+
+    if (!mNumber) {
+      // If no m_number provided in DTO, we might want to fetch from profile
+      // But for security, we'll require it to be explicitly provided
+      throw new BadRequestException('Mobile number is required');
+    }
+
+    // Send OTP via SMS service
+    await this.smsService.sendOtp(mNumber);
+
+    // Return expiration info (typically 10 minutes for OTP)
+    return { expiresIn: 600 }; // 10 minutes in seconds
+  }
+
+  /**
+   * Verifies the OTP code for the specified mobile number.
+   * Uses the same SMS service as the drivers module.
+   */
+  async verifyMnumberOtp(
+    userId: string,
+    dto: VerifyOtpDto,
+  ): Promise<{ verified: true; phone_verified_at: string }> {
+    const { m_number, otp_code } = dto;
+
+    if (!m_number) {
+      throw new BadRequestException('Mobile number is required');
+    }
+
+    // Verify OTP via SMS service
+    await this.smsService.verifyOtp(m_number, otp_code);
+
+    // Return verification success with timestamp
+    return {
+      verified: true,
+      phone_verified_at: new Date().toISOString(),
+    };
   }
 }

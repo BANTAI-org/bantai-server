@@ -135,6 +135,12 @@ export class CreateResponderDto {
   @IsEnum(PoliceRank)
   rank?: PoliceRank;
 
+  @IsOptional()
+  @Matches(/^\+639\d{9}$/, {
+    message: 'm_number must be a valid PH mobile number (+639XXXXXXXXX)',
+  })
+  m_number?: string;
+
   // Optional in body validation; required when caller is Role.SUPER
   @Transform(trimToUndefined)
   @IsOptional()

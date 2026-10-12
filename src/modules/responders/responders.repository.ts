@@ -9,6 +9,23 @@ import { AccountStatusEnum } from '../auth/enums/account-status.enum';
 import { DutyChangeResult } from './types/duty-change-result';
 import { AvailabilityStatusEnum } from './enums/availability-status.enum';
 
+export interface ResponderAccountPatch {
+  m_number?: string;
+  phone_verified_at?: Date;
+}
+
+export interface ResponderProfileRow {
+  id: string;
+  f_name: string;
+  l_name: string;
+  m_name: string | null;
+  email: string;
+  role: Role;
+  command_center_id: string | null;
+  m_number: string | null;
+  phone_verified_at: Date | null;
+}
+
 /** A responder may only go on/off duty within this distance of their command center. */
 const DUTY_GEOFENCE_METERS = 50;
 
@@ -191,5 +208,73 @@ export class ResponderRepository {
     }
     // In range and in the right state, yet nothing changed: a concurrent change won.
     return { status: 'INVALID_STATE', availability: row.availability };
+  }
+
+  /**
+   * Fetches the responder profile for the given user ID.
+   * Returns null if no profile exists or if the user is not a responder.
+   */
+  async findProfileById(userId: string): Promise<ResponderProfileRow | null> {
+    const PROFILE_SELECT_SQL = `
+      SELECT
+        u.id,
+        u.f_name,
+        u.l_name,
+        u.m_name,
+        u.email,
+        u.role,
+        u.command_center_id,
+        p.m_number,
+        p.phone_verified_at
+      FROM user_account u
+      LEFT JOIN r_profile p ON p.user_id = u.id
+      WHERE u.id = $1
+        AND u.role = $2
+        AND u.deleted_at IS NULL
+    `;
+
+    const { rows } = await this.db.query<ResponderProfileRow>(
+      PROFILE_SELECT_SQL,
+      [userId, Role.RESPONDER],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Updates the responder's account information.
+   * Only m_number and phone_verified_at can be updated through this method
+   * to maintain data integrity for authority fields.
+   */
+  async updateUserAccount(
+    userId: string,
+    patch: ResponderAccountPatch,
+  ): Promise<boolean> {
+    const fields: string[] = [];
+    const values: (string | Date)[] = [];
+
+    if (patch.m_number !== undefined) {
+      fields.push(`m_number = $${values.length + 1}`);
+      values.push(patch.m_number);
+    }
+    if (patch.phone_verified_at !== undefined) {
+      fields.push(`phone_verified_at = $${values.length + 1}`);
+      values.push(patch.phone_verified_at);
+    }
+    if (fields.length === 0) return false;
+
+    const userIdParameter = values.length + 1;
+    values.push(userId, Role.RESPONDER);
+
+    const { rows } = await this.db.query<{ id: string }>(
+      `UPDATE user_account
+       SET ${fields.join(', ')}
+       WHERE id = $${userIdParameter}
+         AND role = $${userIdParameter + 1}
+         AND deleted_at IS NULL
+       RETURNING id`,
+      values,
+    );
+
+    return rows.length > 0;
   }
 }

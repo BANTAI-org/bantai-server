@@ -2,11 +2,13 @@ import {
   Body,
   Controller,
   ForbiddenException,
+  Get,
   Post,
   Req,
   UseGuards,
   ValidationPipe,
   BadRequestException,
+  Patch,
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtGuard } from '../../common/guards/jwt.guard';
@@ -16,7 +18,11 @@ import { Role } from '../../common/enums/role-enum';
 import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { ResponderService } from './responders.service';
 import { CreateResponderDto } from './dto/create-responder.dto';
+import { PatchResponderProfileDto } from './dto/patch-responder-profile.dto';
+import { SendOtpDto } from './dto/send-otp.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { UserIdType } from './types/user-id.types';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 type AuthenticatedRequest = Request & { user: JwtPayload };
 
@@ -53,5 +59,42 @@ export class RespondersController {
     }
 
     return this.responderService.createResponder(dto, targetCommandCenterId);
+  }
+
+  @Get('profile')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(Role.RESPONDER)
+  async getProfile(@CurrentUser('sub') userId: string) {
+    return this.responderService.getProfile(userId);
+  }
+
+  @Patch('profile')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(Role.RESPONDER)
+  async updateProfile(
+    @Body() dto: PatchResponderProfileDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.responderService.updateProfile(userId, dto);
+  }
+
+  @Post('request-mnumber-otp')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(Role.RESPONDER)
+  async requestMnumberOtp(
+    @Body() dto: SendOtpDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.responderService.requestMnumberOtp(userId, dto);
+  }
+
+  @Post('verify-mnumber-otp')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(Role.RESPONDER)
+  async verifyMnumberOtp(
+    @Body() dto: VerifyOtpDto,
+    @CurrentUser('sub') userId: string,
+  ) {
+    return this.responderService.verifyMnumberOtp(userId, dto);
   }
 }
