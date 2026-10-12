@@ -26,6 +26,7 @@ import {
   stripCursorColumn,
   toPage,
 } from '../../common/utils/cursor-pagination-helper.util';
+import { Injectable } from '@nestjs/common';
 
 /**
  * Policy assumption (change here if it differs): these roles may verify an
@@ -95,7 +96,7 @@ function toIncident(row: IncidentRow): IncidentEntity {
   const { lng, lat, ...rest } = row;
   return { ...rest, location: { longitude: lng, latitude: lat } };
 }
-
+@Injectable()
 export class IncidentRepository {
   constructor(private readonly db: DatabaseService) {}
 

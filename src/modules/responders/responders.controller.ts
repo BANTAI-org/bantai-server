@@ -9,6 +9,8 @@ import {
   ValidationPipe,
   BadRequestException,
   Patch,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtGuard } from '../../common/guards/jwt.guard';
@@ -21,6 +23,10 @@ import { CreateResponderDto } from './dto/create-responder.dto';
 import { PatchResponderProfileDto } from './dto/patch-responder-profile.dto';
 import { SendOtpDto } from './dto/send-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { PasswordResetIdentityDto } from './dto/password-reset-identity.dto';
+import { ResetPasswordDto } from './dto/password-reset.dto';
+import { OtpRequestResult } from './interfaces/otp-result.interface';
+import { ResetTokenResult } from './interfaces/result-token-result.interface';
 import { UserIdType } from './types/user-id.types';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
@@ -96,5 +102,32 @@ export class RespondersController {
     @CurrentUser('sub') userId: string,
   ) {
     return this.responderService.verifyMnumberOtp(userId, dto);
+  }
+
+  @Post('forgot-password/request')
+  @HttpCode(HttpStatus.ACCEPTED)
+  async requestPasswordReset(
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    dto: PasswordResetIdentityDto,
+  ): Promise<OtpRequestResult> {
+    return this.responderService.requestPasswordResetOtp(dto);
+  }
+
+  @Post('forgot-password/verify')
+  @HttpCode(HttpStatus.OK)
+  async verifyPasswordResetOtp(
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    dto: VerifyOtpDto,
+  ): Promise<ResetTokenResult> {
+    return this.responderService.verifyPasswordResetOtp(dto);
+  }
+
+  @Post('forgot-password/reset')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async resetPassword(
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    dto: ResetPasswordDto,
+  ): Promise<void> {
+    return this.responderService.resetPassword(dto);
   }
 }

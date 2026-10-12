@@ -29,6 +29,27 @@ export interface ResponderProfileRow {
 /** A responder may only go on/off duty within this distance of their command center. */
 const DUTY_GEOFENCE_METERS = 50;
 
+// Forgot-password types and constants
+export interface ResponderPasswordTarget {
+  id: string;
+  email: string;
+  m_number: string | null;
+}
+
+export interface ResponderResetIdentity {
+  kind: 'id' | 'email' | 'm_number';
+  value: string;
+}
+
+export const PASSWORD_RESET_LOOKUP: Record<
+  ResponderResetIdentity['kind'],
+  string
+> = {
+  id: 'id = $1',
+  email: 'lower(email) = $1',
+  m_number: 'm_number = $1',
+};
+
 const CHANGE_DUTY_SQL = `
   WITH target AS (
     SELECT p.user_id, p.availability,
@@ -275,5 +296,60 @@ export class ResponderRepository {
     );
 
     return rows.length > 0;
+  }
+
+  // ---------------------------------------------------------------
+  // Forgot-password
+  // ---------------------------------------------------------------
+
+  /**
+   * The live responder behind an id, email or phone number, but only if they
+   * have a password to reset. Soft-deleted accounts and social-only
+   * (Google/Apple) accounts return null.
+   * Allows password reset for RESPONDER, ADMIN, and SUPER roles.
+   */
+  async findResponderForPasswordReset(
+    identity: ResponderResetIdentity,
+  ): Promise<ResponderPasswordTarget | null> {
+    const { rows } = await this.db.query<ResponderPasswordTarget>(
+      `SELECT id, email, m_number
+       FROM user_account
+       WHERE role IN ($2, $3, $4)
+         AND deleted_at IS NULL
+         AND password_hash IS NOT NULL
+         AND ${PASSWORD_RESET_LOOKUP[identity.kind]}
+       LIMIT 1`,
+      [identity.value, Role.RESPONDER, Role.ADMIN, Role.SUPER],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Sets the new password hash and signs the responder out everywhere (revokes
+   * every live refresh session), in ONE transaction. Unlike updatePassword,
+   * this is the account-recovery path. Returns false if no live responder
+   * matched, in which case nothing changed.
+   * Works for RESPONDER, ADMIN, and SUPER roles.
+   */
+  async resetPasswordAndRevokeSessions(
+    id: string,
+    passwordHash: string,
+  ): Promise<boolean> {
+    return this.db.withTransaction(async (client) => {
+      const { rows } = await client.query<{ id: string }>(
+        `UPDATE user_account SET password_hash = $1
+         WHERE id = $2 AND role IN ($3, $4, $5) AND deleted_at IS NULL
+         RETURNING id`,
+        [passwordHash, id, Role.RESPONDER, Role.ADMIN, Role.SUPER],
+      );
+      if (rows.length === 0) return false;
+
+      await client.query(
+        `UPDATE user_session SET is_revoked = true
+         WHERE user_id = $1 AND is_revoked = false`,
+        [id],
+      );
+      return true;
+    });
   }
 }
