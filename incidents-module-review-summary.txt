@@ -1,0 +1,58 @@
+Incidents Module Review Summary
+===============================
+
+After reviewing the incidents module against the database schema and rules defined in the migration files, I can confirm that the implementation is correct and consistent.
+
+Key Findings:
+
+1. **Entity Interface Consistency** (`src/modules/incidents/interfaces/incident-entity.interface.ts`)
+   - All fields match the database schema from migrations
+   - Proper typing for optional/nullable fields (driver_id, device_id, confidence_level, etc.)
+   - Correct representation of GeoPoint for location
+   - Proper array type for evidence field (IncidentEvidenceItem[])
+
+2. **DTO Validation** (`src/modules/incidents/dto/create-incident.dto.ts`)
+   - Validation rules match database constraints:
+     - trigger_source validation (EDGE_AI requires confidence_level)
+     - threat_type/threat_category rules (GUN/BLADE must be HAZARD)
+     - confrontation cannot be ASSIST
+     - driver_id only allowed for CENTER_MANUAL
+   - Additional business logic validation (confidence_level omitted for human-raised)
+   - Evidence items properly validated per migration 008 rules
+
+3. **Service Layer** (`src/modules/incidents/incidents.service.ts`)
+   - Properly delegates to repository for all operations
+   - Correctly handles evidence conversion via toIncidentEvidenceItems()
+   - Appropriate error handling for database constraint violations
+   - All incident lifecycle methods properly implemented (claim, markEnRoute, markArrived, verify, resolve, etc.)
+
+4. **Repository Layer** (`src/modules/incidents/incidents.repository.ts`)
+   - Correctly maps database rows to IncidentEntity objects
+   - INCIDENT_COLUMNS constant selects all required fields
+   - toIncident() function properly converts PostGIS geometry to GeoPoint
+   - Evidence field handled correctly with JSON.stringify() for storage
+   - All custom methods (updateThreatLevel, updateSeverity, escalateIncident, etc.) properly implement business logic
+   - Proper use of transactions and CTEs for complex operations
+
+5. **Migration Consistency**
+   - Migration 008 (evidence JSONB column): Properly handled via JSON.stringify in repository and proper DTO validation
+   - Migration 009 (threat_type and severity columns): Fields properly included in entity, DTO, and repository
+   - All constraints from migrations are respected in code (validated by service/repository logic)
+
+6. **Controller Layer** (`src/modules/incidents/incidents.controller.ts`)
+   - Proper role-based access control for all endpoints
+   - Correctly extracts user information from JWT tokens
+   - Appropriate validation and delegation to service layer
+   - Only minor TODO note about import paths (not related to incidents logic)
+
+Conclusion:
+The incidents module is properly implemented and fully consistent with the database schema and business rules defined in the migration files. All layers (controller, service, repository, DTOs, entities) correctly handle the incident data model including:
+- Core incident fields (id, timestamps, status, outcome)
+- Geographic location (PostGIS geography)
+- Evidence storage (JSONB array)
+- Threat assessment (threat_type, threat_category, threat_level, severity)
+- Lifecycle tracking (claimed_*, dispatched_at, on_scene_at, etc.)
+- Verification and resolution workflows
+- Escalation and reporting integrations
+
+No inconsistencies or issues were found during the review.
