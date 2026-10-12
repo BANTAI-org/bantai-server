@@ -224,10 +224,9 @@ export class ResponderRepository {
         u.email,
         u.role,
         u.command_center_id,
-        p.m_number,
-        p.phone_verified_at
+        u.m_number,
+        u.phone_verified_at
       FROM user_account u
-      LEFT JOIN r_profile p ON p.user_id = u.id
       WHERE u.id = $1
         AND u.role = $2
         AND u.deleted_at IS NULL
