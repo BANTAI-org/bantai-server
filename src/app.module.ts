@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { DatabaseModule } from './database/database.module';
@@ -20,6 +21,7 @@ import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
       isGlobal: true,
       validate,
     }),
+    EventEmitterModule.forRoot(),
     DatabaseModule,
     AuthModule,
     CommandCenterModule,
@@ -30,6 +32,7 @@ import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
     RedisModule,
     IncidentModule,
     AuditLogsModule,
+    IncidentModule,
   ],
   controllers: [AppController],
   providers: [AppService],

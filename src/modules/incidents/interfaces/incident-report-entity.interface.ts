@@ -1,30 +1,33 @@
 import { IncidentDisposition } from '../enums/incident-disposition.enum';
-import { IncidentEvidenceItem } from '../types/evidence-item.type';
 import { ReportStatus } from '../enums/report-status.enum';
+
+/** 1:1 with the incident_report table. */
 export interface IncidentReportEntity {
   id: string;
-  /** Unique per (incident_id, command_center_id). */
+  /** One report per (incident, command_center_id). */
   incident_id: string;
+  /** The reporting responder's home command center, set at creation. */
   command_center_id: string;
+
   assigned_reporter_id: string | null;
   submitted_by_id: string | null;
-  /** Required once status is past DRAFT. */
+
+  /** Required once status is anything other than 'draft'. */
   disposition: IncidentDisposition | null;
   summary: string;
   detailed_narrative: string | null;
-  /**
-   * JSONB array. The database only enforces that it is an array; the item shape
-   * is not constrained. Plain URL strings and IncidentEvidenceItem objects are
-   * both possible, so narrow before use.
-   */
-  evidence_urls: Array<string | IncidentEvidenceItem>;
-  /** Defaults to DRAFT. */
+  evidence_urls: string[];
   status: ReportStatus;
-  /** Set (with reviewed_at) only for NEEDS_REVISION / APPROVED; never the submitter. */
+
+  /**
+   * Set only for 'needs_revision' and 'approved'; must be NULL for
+   * draft / submitted / under_review. reviewed_by can never equal
+   * submitted_by_id. reviewer_notes is required for 'needs_revision'.
+   */
   reviewed_by: string | null;
-  /** Required when status is NEEDS_REVISION. */
   reviewer_notes: string | null;
   reviewed_at: Date | null;
+
   submitted_at: Date | null;
   created_at: Date;
   updated_at: Date;

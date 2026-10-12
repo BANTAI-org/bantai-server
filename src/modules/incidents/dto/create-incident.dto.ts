@@ -1,74 +1,161 @@
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
+  IsDefined,
   IsEnum,
-  IsNotEmpty,
+  IsLatitude,
+  IsLongitude,
   IsNumber,
   IsOptional,
-  IsString,
   IsUUID,
   Max,
-  MaxLength,
   Min,
-  ValidateBy,
+  Validate,
   ValidateNested,
+  ValidationArguments,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
 } from 'class-validator';
-import { Type } from 'class-transformer';
-import { TriggerSource } from '../enums/trigger-source.enum';
-import { type IncidentEvidenceItem } from '../types/evidence-item.type';
+import { GeoPoint } from '../../../common/interfaces/geo-location.interface';
+import { IncidentSeverity } from '../enums/incident-severity.enum';
 import { ThreatCategory } from '../enums/threat-category.enum';
 import { ThreatType } from '../enums/threat-type.enum';
-import { IncidentSeverity } from '../enums/incident-severity.enum';
-import { isValidEvidence } from '../utils/evidences-policy.util';
-import { GeoPointDTO } from './geo-point.dto';
+import { TriggerSource } from '../enums/trigger-source.enum';
+import { IncidentEvidenceItemDto } from './evidence-item.dto';
+/**
+ * Request shape of a location. Must stay compatible with the shared GeoPoint.
+ * @IsNumber first: IsLongitude / IsLatitude alone also accept numeric STRINGS
+ * ("121.03"), which would reach the repository typed as number but be a string.
+ * (GeoPointDTO in geo-point.dto.ts is the same shape; consider keeping one.)
+ */
+export class LocationDto implements GeoPoint {
+  @IsNumber()
+  @IsLongitude()
+  longitude!: number;
 
-const IsIncidentEvidence = () =>
-  ValidateBy({
-    name: 'isIncidentEvidence',
-    validator: {
-      validate: (value: unknown) => isValidEvidence(value),
-      defaultMessage: () =>
-        'evidence must be an array (max 100) of objects with a valid "key" (no scheme or leading "/", max 1024 bytes) and/or a non-blank "url"',
-    },
-  });
+  @IsNumber()
+  @IsLatitude()
+  latitude!: number;
+}
 
-export class CreateIncidentDTO {
-  @IsUUID()
-  driver_id!: string;
+/**
+ * Cross-field rules on a new incident, checked up front so the client gets a
+ * 400 with a readable reason instead of a raw check_violation.
+ *
+ * Enforced by the database too:
+ *   - chck_incident_edge_ai_confidence   EDGE_AI needs confidence_level
+ *   - chck_incident_weapon_is_hazard     GUN / BLADE must be HAZARD
+ *   - chck_incident_confrontation_not_assist
+ *
+ * App rules (stricter than the database):
+ *   - confidence_level is omitted for human-raised incidents
+ *   - EDGE_AI needs device_id: the rider is resolved from the device's active
+ *     pairing, and without a rider chck_incident_driver_required fails
+ *   - driver_id is only accepted on CENTER_MANUAL; for every other source it
+ *     comes from the authenticated rider or the device pairing, so a client
+ *     that sends one gets a 400 instead of being silently ignored
+ */
+@ValidatorConstraint({ name: 'incidentCrossFieldRules', async: false })
+class IncidentCrossFieldRules implements ValidatorConstraintInterface {
+  private violations(o: CreateIncidentDto): string[] {
+    const out: string[] = [];
+    const source = String(o.trigger_source);
+    const type = String(o.threat_type);
+    const category = String(o.threat_category);
+    const hasConfidence =
+      o.confidence_level !== undefined && o.confidence_level !== null;
+    const hasDevice = o.device_id !== undefined && o.device_id !== null;
+    const hasDriver = o.driver_id !== undefined && o.driver_id !== null;
 
-  @IsUUID()
-  device_id!: string;
+    if (source === 'EDGE_AI' && !hasConfidence) {
+      out.push('confidence_level is required when trigger_source is EDGE_AI');
+    }
+    if (source !== 'EDGE_AI' && hasConfidence) {
+      out.push('confidence_level must be omitted for human-raised incidents');
+    }
+    if (source === 'EDGE_AI' && !hasDevice) {
+      out.push('device_id is required when trigger_source is EDGE_AI');
+    }
+    if (source !== 'CENTER_MANUAL' && hasDriver) {
+      out.push(
+        'driver_id can only be set when trigger_source is CENTER_MANUAL',
+      );
+    }
+    if ((type === 'GUN' || type === 'BLADE') && category !== 'HAZARD') {
+      out.push(
+        'threat_category must be HAZARD when threat_type is GUN or BLADE',
+      );
+    }
+    if (type === 'CONFRONTATION' && category === 'ASSIST') {
+      out.push(
+        'threat_category cannot be ASSIST when threat_type is CONFRONTATION',
+      );
+    }
+    return out;
+  }
 
-  @IsNotEmpty()
-  @ValidateNested()
-  @Type(() => GeoPointDTO)
-  location!: GeoPointDTO;
+  validate(_value: unknown, args: ValidationArguments): boolean {
+    return this.violations(args.object as CreateIncidentDto).length === 0;
+  }
 
+  defaultMessage(args: ValidationArguments): string {
+    return this.violations(args.object as CreateIncidentDto).join('; ');
+  }
+}
+
+/**
+ * Body for creating an incident. Maps to CreateIncidentData.
+ *
+ * driver_id is deliberately NOT a free client field for most sources: for
+ * MANUAL_SOS take it from the authenticated rider, for EDGE_AI resolve it from
+ * the device's active pairing. It is only accepted here so a command center can
+ * link a registered rider on a CENTER_MANUAL report (omit it for a walk-in);
+ * any other trigger_source that sends one is rejected (see the rules above).
+ * An EDGE_AI device with no active pairing cannot be resolved to a rider: the
+ * service must answer that itself (409/422), it is not visible in this DTO.
+ */
+export class CreateIncidentDto {
   @IsEnum(TriggerSource)
-  @IsNotEmpty()
+  @Validate(IncidentCrossFieldRules)
   trigger_source!: TriggerSource;
 
-  @IsOptional()
-  @IsString()
-  @MaxLength(50)
-  detected_class!: string | null;
-
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  @Max(1)
-  confidence_level!: number | null;
-
-  @IsIncidentEvidence()
-  evidence!: IncidentEvidenceItem[];
-
-  @IsEnum(ThreatCategory)
-  @IsNotEmpty()
-  threat_category!: ThreatCategory;
+  @IsDefined()
+  @ValidateNested()
+  @Type(() => LocationDto)
+  location!: LocationDto;
 
   @IsEnum(ThreatType)
-  @IsNotEmpty()
   threat_type!: ThreatType;
 
+  @IsEnum(ThreatCategory)
+  threat_category!: ThreatCategory;
+
+  /** 0..1, NUMERIC(5,4). Required for EDGE_AI, omitted otherwise. */
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  @Max(1)
+  confidence_level?: number | null;
+
+  @IsOptional()
+  @IsUUID()
+  device_id?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  driver_id?: string | null;
+
+  /** Defaults to UNKNOWN in the database when omitted. */
   @IsOptional()
   @IsEnum(IncidentSeverity)
   severity?: IncidentSeverity;
+
+  /** Defaults to []. Max 100 items (database limit). */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => IncidentEvidenceItemDto)
+  evidence?: IncidentEvidenceItemDto[];
 }

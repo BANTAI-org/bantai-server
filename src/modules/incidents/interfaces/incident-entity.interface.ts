@@ -16,8 +16,6 @@ export interface IncidentEntity {
   location: GeoPoint;
 
   trigger_source: TriggerSource;
-  /** Raw label from the edge model (free text, max 50 chars). */
-  detected_class: string | null;
   /** 0..1. Required for EDGE_AI, NULL for human-raised incidents. */
   confidence_level: number | null;
 

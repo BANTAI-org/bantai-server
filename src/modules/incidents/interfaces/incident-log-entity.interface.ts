@@ -12,7 +12,6 @@ export interface IncidentLogEntity {
   incident_id: string | null;
 
   trigger_source: TriggerSource | null;
-  detected_class: string | null;
   confidence_level: number | null;
   threat_category: ThreatCategory | null;
   threat_level: ThreatLevel | null;
