@@ -3,6 +3,7 @@ import { DeviceStatus } from './enums/device-status.enum';
 import { CreateNewDeviceData } from './types/create-new-device.type';
 import { DeviceEntity } from './interfaces/device-entity.interface';
 import { DevicePairingHistoryEntity } from './interfaces/device-pairing-history-entity.interface';
+import { Injectable } from '@nestjs/common';
 
 interface DeviceRow {
   id: string;
@@ -41,6 +42,7 @@ function mapDeviceRow(row: DeviceRow): DeviceEntity {
   };
 }
 
+@Injectable()
 export class DevicesRepository {
   constructor(private readonly db: DatabaseService) {}
 
