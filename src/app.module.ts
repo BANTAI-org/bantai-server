@@ -14,6 +14,7 @@ import { SmsModule } from './modules/sms/sms.module';
 import { RedisModule } from './modules/redis/redis.module';
 import { IncidentModule } from './modules/incidents/incidents.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
+import { DevicesModule } from './modules/devices/devices.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
     IncidentModule,
     AuditLogsModule,
     IncidentModule,
+    DevicesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
