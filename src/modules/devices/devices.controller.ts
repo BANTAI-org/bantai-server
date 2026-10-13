@@ -32,7 +32,7 @@ export class DevicesController {
   }
 
   @Post('pair')
-  @Roles(Role.ADMIN, Role.RESPONDER)
+  @Roles(Role.ADMIN, Role.RESPONDER, Role.DRIVER)
   async pairDevice(@Body() pairDeviceDto: PairDeviceDto) {
     return this.devicesService.pairDevice({
       deviceId: pairDeviceDto.deviceId,
