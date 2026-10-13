@@ -47,7 +47,7 @@ import { REDIS_CLIENT } from '../redis/provider/redis.provider';
 import {} from // SOCIAL_IDENTITY_VERIFIERS,
 // type SocialIdentityVerifiers,
 './types/social-identity-provider.type';
-// import { isPastDate } from './util/is-past-date.util';
+// import { isPastDate } = './util/is-past-date.util';
 import { isPgError } from './util/pg-error.util';
 import { OtpChannel } from './types/otp-channel.type';
 import {
@@ -111,8 +111,7 @@ export class ResponderService {
    * transaction. The account must be committed before a token can
    * reference it, and an email can't be rolled back anyway. If the
    * email step fails the account still exists and stays pending, so
-   * the caller is told exactly that and can resend the link instead
-   * of re-creating the account.
+   * the caller is told exactly that and can resend the activation link instead of creating the account again.
    *
    * @param dto Validated, normalized request body.
    * @param commandCenterId The calling admin's own command center, from
@@ -127,6 +126,7 @@ export class ResponderService {
   async createResponder(
     dto: CreateResponderDto,
     commandCenterId: string,
+    userId: string,
   ): Promise<UserIdType> {
     const role = dto.role ?? Role.RESPONDER;
 
@@ -175,7 +175,7 @@ export class ResponderService {
     // Create audit log for responder account creation
     try {
       const auditInput = {
-        actorId: commandCenterId,
+        actorId: userId,
         commandCenterId,
         action: AuditAction.CREATE_USER,
         targetEntity: 'user_account',
@@ -229,6 +229,12 @@ export class ResponderService {
     );
     this.assertDutyChanged(result, AvailabilityStatusEnum.ON_DUTY);
 
+    // Publish duty update for WebSocket gateway
+    await this.redis.publish(
+      'duty:updates',
+      JSON.stringify({ userId, role: 'responder', status: 'on duty' }),
+    );
+
     return {
       availability: AvailabilityStatusEnum.ON_DUTY,
       shift_ends_at: shiftEndsAt.toISOString(),
@@ -244,6 +250,13 @@ export class ResponderService {
     this.assertDutyChanged(result, AvailabilityStatusEnum.OFF_DUTY);
 
     await this.stopTracking(userId);
+
+    // Publish duty update for WebSocket gateway
+    await this.redis.publish(
+      'duty:updates',
+      JSON.stringify({ userId, role: 'responder', status: 'off duty' }),
+    );
+
     return {
       availability: AvailabilityStatusEnum.OFF_DUTY,
       shift_ends_at: null,
@@ -269,7 +282,16 @@ export class ResponderService {
       return 0;
     }
 
-    await Promise.all(userIds.map((id) => this.stopTracking(id)));
+    await Promise.all(
+      userIds.map(async (id) => {
+        await this.stopTracking(id);
+        // Publish duty update for each responder going off duty due to expiry
+        await this.redis.publish(
+          'duty:updates',
+          JSON.stringify({ userId: id, role: 'responder', status: 'off duty' }),
+        );
+      }),
+    );
     return userIds.length;
   }
 
@@ -489,12 +511,9 @@ export class ResponderService {
     userId: string,
     dto: SendOtpDto,
   ): Promise<{ expiresIn: number }> {
-    // Use the m_number from dto if provided, otherwise fetch from user's profile
     const mNumber = dto.m_number;
 
     if (!mNumber) {
-      // If no m_number provided in DTO, we might want to fetch from profile
-      // But for security, we'll require it to be explicitly provided
       throw new BadRequestException('Mobile number is required');
     }
 

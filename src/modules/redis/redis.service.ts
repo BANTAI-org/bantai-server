@@ -61,6 +61,12 @@ export class RedisService {
       .geoadd(geoKey(role), longitude, latitude, userId)
       .exec();
     this.assertPipelineOk(results);
+
+    // Publish the update to a channel for real-time WebSocket subscribers
+    await this.redis.publish(
+      `gps:updates:${userId}`,
+      JSON.stringify({ userId, role, ...fix }),
+    );
   }
 
   async get(userId: string): Promise<LiveLocation | null> {

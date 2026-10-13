@@ -43,6 +43,7 @@ export class RespondersController {
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
     dto: CreateResponderDto,
     @Req() req: AuthenticatedRequest,
+    @CurrentUser('sub') userId: string,
   ): Promise<UserIdType> {
     const { role, command_center_id: jwtCcId } = req.user;
 
@@ -64,7 +65,11 @@ export class RespondersController {
       targetCommandCenterId = jwtCcId;
     }
 
-    return this.responderService.createResponder(dto, targetCommandCenterId);
+    return this.responderService.createResponder(
+      dto,
+      targetCommandCenterId,
+      userId,
+    );
   }
 
   @Get('profile')

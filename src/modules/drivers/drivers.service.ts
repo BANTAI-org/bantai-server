@@ -37,7 +37,6 @@ import {
   EMAIL_OTP_TTL_SECONDS,
   EmailOtpService,
 } from '../email/email-otp.service';
-import { REDIS_CLIENT } from '../redis/provider/redis.provider';
 import { SmsService } from '../sms/sms.service';
 import {
   SOCIAL_IDENTITY_VERIFIERS,
@@ -67,6 +66,7 @@ import { AuthService } from '../auth/auth.service';
 import { AuthTokens } from '../auth/interfaces/auth-token.interface';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ChangeDutyDto } from './dto/change-duty-driver.dto';
+import { REDIS_CLIENT } from '../redis/provider/redis.provider';
 
 type IdentityFields = Pick<
   CreateDriverUserAccount,
@@ -79,7 +79,7 @@ type IdentityFields = Pick<
 
 const RESET_TOKEN_TTL_SECONDS = 10 * 60;
 const RESET_SESSION_EXPIRED_MESSAGE =
-  'Your reset session expired. Please request a new code.';
+  'Your reset token has expired. Please request a new one.';
 
 /** Only a hash of the reset token ever touches Redis. */
 const resetTokenKey = (token: string): string =>
@@ -158,21 +158,6 @@ export class DriverService {
     }
   }
 
-  /**
-   * Final step of the registration wizard: creates the driver, then
-   * signs them straight in. The person just proved who they are more
-   * strongly than a login would (SMS code plus password or social
-   * token), so asking them to sign in again adds friction and no
-   * security.
-   *
-   * Account creation and token issuing are separate steps on purpose.
-   * If issuing tokens fails after the account is committed, the
-   * driver is told so and can simply sign in, instead of seeing a
-   * failed registration for an account that exists.
-   *
-   * @param phoneVerifiedAt Set by the OTP layer after the code checks
-   *   out, never taken from the request body.
-   */
   async registerDriver(
     dto: CreateDriverDto,
     phoneVerifiedAt: Date,
@@ -574,6 +559,15 @@ export class DriverService {
     if (!result) {
       throw new NotFoundException('Driver account not found');
     }
+
+    // Publish duty update for WebSocket gateway
+    const status =
+      dto.duty_status === 'on_duty' ? 'on duty' : 'off duty';
+    await this.redis.publish(
+      'duty:updates',
+      JSON.stringify({ userId, role: 'driver', status }),
+    );
+
     return result;
   }
 }

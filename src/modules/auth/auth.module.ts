@@ -28,6 +28,7 @@ import { RefreshCookieService } from './helpers/refresh-cookie.help';
   ],
   exports: [
     AuthService,
+    JwtModule,
     JwtStrategy,
     PassportModule,
     GoogleService,

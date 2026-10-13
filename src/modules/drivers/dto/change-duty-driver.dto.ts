@@ -9,6 +9,6 @@ export class ChangeDutyDto {
   @ValidateIf((o: ChangeDutyDto) => o.duty_status === DutyStatusEnum.ON_DUTY)
   @IsInt()
   @Min(1)
-  @Max(24)
+  @Max(18)
   shift_hours?: number;
 }

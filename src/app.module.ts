@@ -15,6 +15,7 @@ import { RedisModule } from './modules/redis/redis.module';
 import { IncidentModule } from './modules/incidents/incidents.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { DevicesModule } from './modules/devices/devices.module';
+import { GpsModule } from './modules/gps/gps.module';
 
 @Module({
   imports: [
@@ -33,8 +34,8 @@ import { DevicesModule } from './modules/devices/devices.module';
     RedisModule,
     IncidentModule,
     AuditLogsModule,
-    IncidentModule,
     DevicesModule,
+    GpsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
