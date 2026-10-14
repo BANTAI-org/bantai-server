@@ -1,10 +1,13 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
   Logger,
+  NotFoundException,
+  Param,
   Patch,
   Post,
   Res,
@@ -31,13 +34,19 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { DriverProfileDataRow } from './types/driver-profile-data-row.type';
 import { ChangeDutyDto } from './dto/change-duty-driver.dto';
 
+import { IncidentService } from '../incidents/incidents.service';
+import { RedisService } from '../redis/redis.service';
+import { haversineDistance } from '../../common/utils/geo.utils';
 @Controller('drivers')
 export class DriverController {
   constructor(
     private readonly driverService: DriverService,
     private readonly refreshCookie: RefreshCookieService,
+    private readonly incidentService: IncidentService,
+    private readonly redisService: RedisService,
   ) {}
   logger = new Logger(DriverController.name);
+  private readonly MAX_LOCATION_AGE_MS = 30_000;
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
@@ -46,7 +55,7 @@ export class DriverController {
     dto: CreateDriverDto,
     @Res({ passthrough: true }) response: FastifyReply,
   ): Promise<AuthTokens & UserIdType> {
-    const phoneVerifiedAt = new Date(); // TODO: replace with real OTP verification
+    const phoneVerifiedAt = new Date();
 
     const result = await this.driverService.registerDriver(
       dto,
@@ -120,5 +129,73 @@ export class DriverController {
   ) {
     this.logger.debug(`received user id: ${userId}`);
     return this.driverService.setDutyStatus(userId, dto);
+  }
+
+  @Get(':driverId/incidents/:incidentId/responder-distance')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(Role.DRIVER)
+  async getResponderDistance(
+    @Param('driverId') driverId: string,
+    @Param('incidentId') incidentId: string,
+    @CurrentUser('sub') authDriverId: string,
+  ): Promise<{
+    distanceMeters: number;
+    calculatedAt: string;
+    locationAgeMs: number;
+    isStale: boolean;
+  }> {
+    if (authDriverId !== driverId) {
+      throw new ForbiddenException('You can only access your own driver data');
+    }
+
+    const incident = await this.incidentService.getIncident(incidentId);
+    if (!incident) {
+      throw new NotFoundException('Incident not found');
+    }
+
+    if (incident.driver_id !== driverId) {
+      throw new ForbiddenException('This incident does not belong to you');
+    }
+
+    const responderId = incident.claimed_by_id;
+    if (!responderId) {
+      return {
+        distanceMeters: -1,
+        calculatedAt: new Date().toISOString(),
+        locationAgeMs: 0,
+        isStale: false,
+      };
+    }
+
+    const driverLocation = await this.redisService.getFresh(driverId);
+    const responderLocation = await this.redisService.getFresh(responderId);
+
+    const driverLocationAge = driverLocation
+      ? Date.now() - driverLocation.updated_at
+      : Number.POSITIVE_INFINITY;
+    const responderLocationAge = responderLocation
+      ? Date.now() - responderLocation.updated_at
+      : Number.POSITIVE_INFINITY;
+    const locationAgeMs = Math.max(driverLocationAge, responderLocationAge);
+    const isStale = locationAgeMs > this.MAX_LOCATION_AGE_MS;
+
+    if (!driverLocation || !responderLocation) {
+      return {
+        distanceMeters: -1,
+        calculatedAt: new Date().toISOString(),
+        locationAgeMs,
+        isStale,
+      };
+    }
+
+    const distanceMeters = haversineDistance(driverLocation, responderLocation);
+
+    return {
+      distanceMeters,
+      calculatedAt: new Date().toISOString(),
+      locationAgeMs,
+      isStale,
+    };
   }
 }

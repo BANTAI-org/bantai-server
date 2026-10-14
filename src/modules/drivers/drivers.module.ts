@@ -11,9 +11,10 @@ import {
 import { GoogleService } from '../auth/providers/google.service';
 import { SmsModule } from '../sms/sms.module';
 import { EmailModule } from '../email/email.module';
+import { IncidentModule } from '../incidents/incidents.module';
 
 @Module({
-  imports: [AuthModule, SmsModule, EmailModule],
+  imports: [AuthModule, SmsModule, EmailModule, IncidentModule],
   controllers: [DriverController],
   providers: [
     DriverService,

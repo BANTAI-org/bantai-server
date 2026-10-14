@@ -66,6 +66,7 @@ import { AuthService } from '../auth/auth.service';
 import { AuthTokens } from '../auth/interfaces/auth-token.interface';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ChangeDutyDto } from './dto/change-duty-driver.dto';
+import { DutyStatusEnum } from './enums/duty-status.enum';
 import { REDIS_CLIENT } from '../redis/provider/redis.provider';
 
 type IdentityFields = Pick<
@@ -561,7 +562,8 @@ export class DriverService {
     }
 
     // Publish duty update for WebSocket gateway
-    const status = dto.duty_status === 'on_duty' ? 'on duty' : 'off duty';
+    const status =
+      dto.duty_status === DutyStatusEnum.ON_DUTY ? 'on duty' : 'off duty';
     await this.redis.publish(
       'duty:updates',
       JSON.stringify({ userId, role: 'driver', status }),
