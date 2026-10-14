@@ -4,7 +4,7 @@ import type { Redis } from 'ioredis';
 import { REDIS_CLIENT } from '../redis/provider/redis.provider';
 import { EmailService } from './email.service';
 
-export const EMAIL_OTP_TTL_SECONDS = 10 * 60;
+export const EMAIL_OTP_TTL_SECONDS = 30 * 60;
 
 const codeKey = (purpose: string, email: string): string =>
   `otp:email:${purpose}:${email}`;
