@@ -507,7 +507,13 @@ export class ResponderService {
    * Sends an OTP to the specified mobile number for verification.
    * Uses the same SMS service as the drivers module.
    */
-  async requestMnumberOtp(dto: SendOtpDto): Promise<{ expiresIn: number }> {
+  async requestMnumberOtp(
+    userId: string,
+    dto: SendOtpDto,
+  ): Promise<{ expiresIn: number }> {
+    // Validate user exists and is a responder
+    await this.responderRepository.findProfileById(userId);
+
     const mNumber = dto.m_number;
 
     if (!mNumber) {
@@ -526,8 +532,12 @@ export class ResponderService {
    * Uses the same SMS service as the drivers module.
    */
   async verifyMnumberOtp(
+    userId: string,
     dto: VerifyOtpDto,
   ): Promise<{ verified: true; phone_verified_at: string }> {
+    // Validate user exists and is a responder
+    await this.responderRepository.findProfileById(userId);
+
     const { m_number, otp_code } = dto;
 
     if (!m_number) {
