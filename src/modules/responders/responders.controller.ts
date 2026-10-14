@@ -33,11 +33,11 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 type AuthenticatedRequest = Request & { user: JwtPayload };
 
 @Controller('responders')
-@UseGuards(JwtGuard, RolesGuard)
 export class RespondersController {
   constructor(private readonly responderService: ResponderService) {}
 
   @Post()
+  @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPER)
   async createResponder(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
@@ -90,14 +90,14 @@ export class RespondersController {
   }
 
   @Post('request-mnumber-otp')
-  @UseGuards()
+  @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.RESPONDER)
   async requestMnumberOtp(@Body() dto: SendOtpDto) {
     return this.responderService.requestMnumberOtp(dto);
   }
 
   @Post('verify-mnumber-otp')
-  @UseGuards()
+  @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.RESPONDER)
   async verifyMnumberOtp(@Body() dto: VerifyOtpDto) {
     return this.responderService.verifyMnumberOtp(dto);
