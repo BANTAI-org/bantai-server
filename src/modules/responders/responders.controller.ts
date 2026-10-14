@@ -90,23 +90,17 @@ export class RespondersController {
   }
 
   @Post('request-mnumber-otp')
-  @UseGuards(JwtGuard, RolesGuard)
+  @UseGuards()
   @Roles(Role.RESPONDER)
-  async requestMnumberOtp(
-    @Body() dto: SendOtpDto,
-    @CurrentUser('sub') userId: string,
-  ) {
-    return this.responderService.requestMnumberOtp(userId, dto);
+  async requestMnumberOtp(@Body() dto: SendOtpDto) {
+    return this.responderService.requestMnumberOtp(dto);
   }
 
   @Post('verify-mnumber-otp')
-  @UseGuards(JwtGuard, RolesGuard)
+  @UseGuards()
   @Roles(Role.RESPONDER)
-  async verifyMnumberOtp(
-    @Body() dto: VerifyOtpDto,
-    @CurrentUser('sub') userId: string,
-  ) {
-    return this.responderService.verifyMnumberOtp(userId, dto);
+  async verifyMnumberOtp(@Body() dto: VerifyOtpDto) {
+    return this.responderService.verifyMnumberOtp(dto);
   }
 
   @Post('forgot-password/request')
