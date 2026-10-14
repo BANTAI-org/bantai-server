@@ -1,4 +1,6 @@
-export function isPgError(error: unknown): error is { code?: string; constraint?: string } {
+export function isPgError(
+  error: unknown,
+): error is { code?: string; constraint?: string } {
   return (
     typeof error === 'object' &&
     error !== null &&

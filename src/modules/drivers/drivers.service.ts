@@ -561,8 +561,7 @@ export class DriverService {
     }
 
     // Publish duty update for WebSocket gateway
-    const status =
-      dto.duty_status === 'on_duty' ? 'on duty' : 'off duty';
+    const status = dto.duty_status === 'on_duty' ? 'on duty' : 'off duty';
     await this.redis.publish(
       'duty:updates',
       JSON.stringify({ userId, role: 'driver', status }),
