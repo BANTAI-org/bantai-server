@@ -250,7 +250,7 @@ export class ResponderRepository {
         u.phone_verified_at
       FROM user_account u
       WHERE u.id = $1
-        AND u.deleted_at IS_NULL
+        AND u.deleted_at IS NULL
     `;
 
     const { rows } = await this.db.query<ResponderProfileRow>(
