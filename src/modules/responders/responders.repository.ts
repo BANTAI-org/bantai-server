@@ -232,8 +232,9 @@ export class ResponderRepository {
   }
 
   /**
-   * Fetches the responder profile for the given user ID.
-   * Returns null if no profile exists or if the user is not a responder.
+   * Fetches the user profile for the given user ID.
+   * Returns the user account details (including role) for any role.
+   * Returns null if no user exists or if the user is soft-deleted.
    */
   async findProfileById(userId: string): Promise<ResponderProfileRow | null> {
     const PROFILE_SELECT_SQL = `
@@ -249,13 +250,12 @@ export class ResponderRepository {
         u.phone_verified_at
       FROM user_account u
       WHERE u.id = $1
-        AND u.role = $2
-        AND u.deleted_at IS NULL
+        AND u.deleted_at IS_NULL
     `;
 
     const { rows } = await this.db.query<ResponderProfileRow>(
       PROFILE_SELECT_SQL,
-      [userId, Role.RESPONDER],
+      [userId],
     );
     return rows[0] ?? null;
   }

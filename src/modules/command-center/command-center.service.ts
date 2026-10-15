@@ -16,6 +16,7 @@ import { UpdateCommandCenterDTO } from './dto/update-command-center.dto';
 import { UpdateCommandCenterData } from './types/update-command-center-data.types';
 import { CreateCommandCenterData } from './types/create-command-center-data.types';
 import { ResponderTableRow } from './interfaces/responder-tb.interface';
+
 // Matches the "expires in 1 hour" copy in EmailService.sendPasswordResetEmail.
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const RESPONDER_NOT_FOUND = 'Responder not found in this command center';
@@ -262,7 +263,7 @@ export class CommandCenterService {
         error instanceof Error ? error.stack : undefined,
       );
       throw new InternalServerErrorException(
-        'The reset link could not be emailed. Please try again.',
+        `The reset link could not be emailed. Please try again.`,
       );
     }
   }
@@ -297,6 +298,19 @@ export class CommandCenterService {
     );
     throw new InternalServerErrorException(
       'An unexpected error occurred while processing the request',
+    );
+  }
+
+  async getMyCommandCenter(
+    userId: string,
+  ): Promise<CommandCenterEntity | null> {
+    const actorScope =
+      await this.commandCenterRepository.findActorScope(userId);
+    if (!actorScope?.command_center_id) {
+      return null;
+    }
+    return await this.commandCenterRepository.findById(
+      actorScope.command_center_id,
     );
   }
 }

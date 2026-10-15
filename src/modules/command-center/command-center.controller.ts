@@ -64,7 +64,8 @@ export class CommandCenterController {
   @Roles(Role.SUPER, Role.ADMIN)
   async listResponders(
     @Param('centerId', ParseUUIDPipe) centerId: string,
-    @CurrentUser('sub') userId: string,
+    @CurrentUser('sub')
+    userId: string,
   ): Promise<ResponderTableRow[]> {
     return this.commandCenterService.getBranchResponders(userId, centerId);
   }
@@ -75,7 +76,8 @@ export class CommandCenterController {
   async deactivateResponder(
     @Param('centerId', ParseUUIDPipe) centerId: string,
     @Param('responderId', ParseUUIDPipe) responderId: string,
-    @CurrentUser('sub') userId: string,
+    @CurrentUser('sub')
+    userId: string,
   ): Promise<void> {
     return this.commandCenterService.deactivateResponder(
       userId,
@@ -90,7 +92,8 @@ export class CommandCenterController {
   async activateResponder(
     @Param('centerId', ParseUUIDPipe) centerId: string,
     @Param('responderId', ParseUUIDPipe) responderId: string,
-    @Req() req: AuthenticatedRequest,
+    @Req()
+    req: AuthenticatedRequest,
   ): Promise<void> {
     return this.commandCenterService.activateResponder(
       req.user.sub,
@@ -105,7 +108,8 @@ export class CommandCenterController {
   async revokeResponderSessions(
     @Param('centerId', ParseUUIDPipe) centerId: string,
     @Param('responderId', ParseUUIDPipe) responderId: string,
-    @Req() req: AuthenticatedRequest,
+    @Req()
+    req: AuthenticatedRequest,
   ): Promise<void> {
     return this.commandCenterService.revokeResponderSessions(
       req.user.sub,
@@ -120,12 +124,31 @@ export class CommandCenterController {
   async forceResponderPasswordReset(
     @Param('centerId', ParseUUIDPipe) centerId: string,
     @Param('responderId', ParseUUIDPipe) responderId: string,
-    @Req() req: AuthenticatedRequest,
+    @Req()
+    req: AuthenticatedRequest,
   ): Promise<void> {
     return this.commandCenterService.forceResponderPasswordReset(
       req.user.sub,
       centerId,
       responderId,
     );
+  }
+
+  @Get('me')
+  @Roles(Role.ADMIN, Role.SUPER)
+  async getMyCommandCenter(
+    @CurrentUser('sub') userId: string,
+  ): Promise<CommandCenterEntity | null> {
+    return await this.commandCenterService.getMyCommandCenter(userId);
+  }
+
+  @Get()
+  @Roles(Role.SUPER)
+  async getAllCommandCenters(): Promise<{ id: string; name: string }[]> {
+    const centers = await this.commandCenterService.getAll();
+    if (!centers) {
+      return [];
+    }
+    return centers.map((c) => ({ id: c.id, name: c.name }));
   }
 }

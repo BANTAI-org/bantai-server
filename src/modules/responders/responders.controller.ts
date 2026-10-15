@@ -74,14 +74,14 @@ export class RespondersController {
 
   @Get('profile')
   @UseGuards(JwtGuard, RolesGuard)
-  @Roles(Role.RESPONDER)
+  @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
   async getProfile(@CurrentUser('sub') userId: string) {
     return this.responderService.getProfile(userId);
   }
 
   @Patch('profile')
   @UseGuards(JwtGuard, RolesGuard)
-  @Roles(Role.RESPONDER)
+  @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
   async updateProfile(
     @Body() dto: PatchResponderProfileDto,
     @CurrentUser('sub') userId: string,

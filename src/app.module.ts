@@ -16,6 +16,7 @@ import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { DevicesModule } from './modules/devices/devices.module';
 import { GpsModule } from './modules/gps/gps.module';
 import { WaveDispatchModule } from './modules/wave-dispatch/wave-dispatch.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { validate } from './config/env.config';
 
 @Module({
@@ -38,6 +39,7 @@ import { validate } from './config/env.config';
     DevicesModule,
     GpsModule,
     WaveDispatchModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [AppService],
