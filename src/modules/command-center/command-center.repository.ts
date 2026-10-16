@@ -148,6 +148,8 @@ export class CommandCenterRepository {
        u.l_name,
        u.m_name,
        u.role,
+       u.email,
+       p.rank,
        p.agency,
        p.availability
      FROM user_account u

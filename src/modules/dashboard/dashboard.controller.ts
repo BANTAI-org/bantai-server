@@ -25,13 +25,11 @@ export class DashboardController {
   ): Promise<DashboardStatsDto> {
     let centerId: string;
     if (user.role === Role.ADMIN) {
-      // For admin, use their own command center ID from the JWT.
       if (!user.command_center_id) {
         throw new BadRequestException('commandCenterId is required for admin');
       }
       centerId = user.command_center_id;
     } else if (user.role === Role.SUPER) {
-      // For super, we require the commandCenterId query parameter.
       if (!commandCenterId) {
         throw new BadRequestException(
           'commandCenterId is required for super admin',
@@ -39,7 +37,6 @@ export class DashboardController {
       }
       centerId = commandCenterId!;
     } else {
-      // This should not happen due to the Roles guard, but just in case.
       throw new BadRequestException('Invalid role');
     }
 
