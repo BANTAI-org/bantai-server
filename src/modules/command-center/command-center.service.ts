@@ -8,6 +8,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Role } from '../../common/enums/role-enum';
+import { AccountStatusEnum } from '../../modules/auth/enums/account-status.enum';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { AuditAction } from '../audit-logs/enums/audit-action.enum';
 import { EmailService } from '../email/email.service';
 import { CommandCenterRepository } from './command-center.repository';
 import { CommandCenterEntity } from './interfaces/command-center.interface';
@@ -37,7 +40,36 @@ export class CommandCenterService {
   constructor(
     private readonly commandCenterRepository: CommandCenterRepository,
     private readonly emailService: EmailService,
+    private readonly auditLogsService: AuditLogsService,
   ) {}
+
+  private async createAuditLog(
+    action: AuditAction,
+    actorId: string | null,
+    commandCenterId: string | null,
+    targetEntity: string,
+    targetId: string,
+    oldPayload: Record<string, unknown> | null = null,
+    newPayload: Record<string, unknown> | null = null,
+  ): Promise<void> {
+    try {
+      await this.auditLogsService.createAudit({
+        actorId,
+        commandCenterId,
+        action,
+        targetEntity,
+        targetId,
+        oldPayload,
+        newPayload,
+      });
+    } catch (error) {
+      // Don't let audit logging failures break the main operation
+      this.logger.error(
+        `Failed to create audit log for action ${action}:`,
+        error instanceof Error ? error.stack : error,
+      );
+    }
+  }
 
   private sanitizeString(value?: string): string | undefined {
     if (!value) return undefined;
@@ -52,7 +84,26 @@ export class CommandCenterService {
     };
 
     try {
-      return await this.commandCenterRepository.createBranch(createData);
+      const createdCenter =
+        await this.commandCenterRepository.createBranch(createData);
+
+      // Create audit log for command center creation
+      await this.createAuditLog(
+        AuditAction.CREATE_CC,
+        null, // actorId - system/super admin action
+        createdCenter.id, // commandCenterId - the newly created CC
+        'command_center',
+        createdCenter.id,
+        null, // oldPayload
+        {
+          name: createdCenter.name,
+          branch: createdCenter.branch,
+          type: createdCenter.type,
+          location: createdCenter.location,
+        }, // newPayload
+      );
+
+      return createdCenter;
     } catch (error: unknown) {
       this.logger.error(
         'An error occurred while creating new center',
@@ -73,6 +124,9 @@ export class CommandCenterService {
       ...(dto.name && { name: this.sanitizeString(dto.name) }),
       ...(dto.branch && { branch: this.sanitizeString(dto.branch) }),
     };
+
+    // Get original entity for audit log
+    const originalCenter = await this.commandCenterRepository.findById(id);
 
     let updatedCenter: CommandCenterEntity | null = null;
 
@@ -96,10 +150,36 @@ export class CommandCenterService {
       throw new NotFoundException(`Command center with ID '${id}' not found`);
     }
 
+    // Create audit log for command center update
+    await this.createAuditLog(
+      AuditAction.UPDATE_USER, // Note: There's no specific UPDATE_CC action, using UPDATE_USER as closest match
+      null, // actorId - system/super admin action
+      id, // commandCenterId
+      'command_center',
+      id,
+      originalCenter
+        ? {
+            name: originalCenter.name,
+            branch: originalCenter.branch,
+            type: originalCenter.type,
+            location: originalCenter.location,
+          }
+        : null, // oldPayload
+      {
+        name: updatedCenter.name,
+        branch: updatedCenter.branch,
+        type: updatedCenter.type,
+        location: updatedCenter.location,
+      }, // newPayload
+    );
+
     return updatedCenter;
   }
 
   async delete(id: string): Promise<void> {
+    // Get entity for audit log before deletion
+    const centerToDelete = await this.commandCenterRepository.findById(id);
+
     let isDeleted = false;
 
     try {
@@ -118,6 +198,23 @@ export class CommandCenterService {
       this.logger.warn(`Command center deletion failed: ID '${id}' not found`);
       throw new NotFoundException(`Command center not found`);
     }
+
+    await this.createAuditLog(
+      AuditAction.UPDATE_USER,
+      null,
+      id,
+      'command_center',
+      id,
+      centerToDelete
+        ? {
+            name: centerToDelete.name,
+            branch: centerToDelete.branch,
+            type: centerToDelete.type,
+            location: centerToDelete.location,
+          }
+        : null, // oldPayload
+      null, // newPayload
+    );
   }
 
   async getAll(): Promise<CommandCenterEntity[] | null> {
@@ -172,11 +269,49 @@ export class CommandCenterService {
   ): Promise<ResponderTableRow[]> {
     await this.assertBranchAccess(actorId, centerId);
     try {
+      const result =
+        await this.commandCenterRepository.viewAllRespondersBranch(centerId);
+      return result.data;
+    } catch (error: unknown) {
+      this.rethrow(error, 'list responders of', centerId);
+    }
+  }
+
+  async getBranchRespondersPaginated(
+    actorId: string,
+    centerId: string,
+    limit: number = 20,
+    cursor: string | null = null,
+  ): Promise<{ data: ResponderTableRow[]; nextCursor: string | null }> {
+    await this.assertBranchAccess(actorId, centerId);
+    try {
       return await this.commandCenterRepository.viewAllRespondersBranch(
         centerId,
+        limit,
+        cursor,
       );
     } catch (error: unknown) {
       this.rethrow(error, 'list responders of', centerId);
+    }
+  }
+
+  async getBranchRespondersByStatusPaginated(
+    actorId: string,
+    centerId: string,
+    status: AccountStatusEnum,
+    limit: number = 20,
+    cursor: string | null = null,
+  ): Promise<{ data: ResponderTableRow[]; nextCursor: string | null }> {
+    await this.assertBranchAccess(actorId, centerId);
+    try {
+      return await this.commandCenterRepository.viewAllRespondersBasedOnStatusBranch(
+        centerId,
+        status,
+        limit,
+        cursor,
+      );
+    } catch (error: unknown) {
+      this.rethrow(error, 'list responders by status of', centerId);
     }
   }
 

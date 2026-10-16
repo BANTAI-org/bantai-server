@@ -5,6 +5,7 @@ export interface SystemAuditLogEntity<
 > {
   id: string;
   actorId: string | null;
+  actorName: string | null;
   commandCenterId: string | null;
   action: AuditAction;
   targetEntity: string;

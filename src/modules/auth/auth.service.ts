@@ -6,6 +6,7 @@ import {
   BadRequestException,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -506,5 +507,45 @@ export class AuthService {
         `No active ${provider} identity found to unlink.`,
       );
     }
+  }
+  async checkAccountExistenceAndStatus(email: string): Promise<boolean> {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
+      throw new NotFoundException('No account associated with this email.');
+    }
+
+    let status: AccountStatusEnum | null = null;
+    try {
+      status = await this.authRepository.getAccountStatus(cleanEmail);
+    } catch (err: unknown) {
+      this.logger.error(
+        `Error checking account status for email ${cleanEmail}`,
+        err instanceof Error ? err.stack : err,
+      );
+      throw new InternalServerErrorException(
+        'Failed to verify account status.',
+      );
+    }
+
+    if (!status) {
+      this.logger.warn(`Account check failed — email not found: ${cleanEmail}`);
+      throw new NotFoundException('No account associated with this email.');
+    }
+
+    if (status === AccountStatusEnum.DEACTIVATED) {
+      this.logger.warn(
+        `Account check failed — deactivated account: ${cleanEmail}`,
+      );
+      throw new ForbiddenException('This account has been deactivated.');
+    }
+
+    if (status === AccountStatusEnum.PENDING_ACTIVATION) {
+      this.logger.warn(
+        `Account check failed — pending activation: ${cleanEmail}`,
+      );
+      throw new UnauthorizedException('Account is pending activation.');
+    }
+
+    return true;
   }
 }

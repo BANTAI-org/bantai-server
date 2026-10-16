@@ -2,7 +2,7 @@ import { SystemAuditLogEntity } from '../interfaces/system-audit-logs-entity.int
 
 export type CreateAuditLogInput = Omit<
   SystemAuditLogEntity,
-  'id' | 'createdAt'
+  'id' | 'createdAt' | 'actorName'
 > & {
   id?: string;
   createdAt?: Date;

@@ -6,6 +6,7 @@ import { CommandCenterEntity } from './interfaces/command-center.interface';
 import { ResponderTableRow } from './interfaces/responder-tb.interface';
 
 import { Role } from '../../common/enums/role-enum';
+import { AccountStatusEnum } from '../../modules/auth/enums/account-status.enum';
 @Injectable()
 export class CommandCenterRepository {
   constructor(private readonly db: DatabaseService) {}
@@ -140,14 +141,19 @@ export class CommandCenterRepository {
     return (result.rowCount ?? 0) > 0;
   }
 
-  async viewAllRespondersBranch(id: string): Promise<ResponderTableRow[]> {
-    const { rows } = await this.db.query<ResponderTableRow>(
-      `SELECT
+  async viewAllRespondersBranch(
+    id: string,
+    limit: number = 20,
+    cursor: string | null = null,
+  ): Promise<{ data: ResponderTableRow[]; nextCursor: string | null }> {
+    let query = `
+      SELECT
        u.id,
        u.f_name,
        u.l_name,
        u.m_name,
        u.role,
+       u.account_status,
        u.email,
        p.rank,
        p.agency,
@@ -157,16 +163,101 @@ export class CommandCenterRepository {
      WHERE u.command_center_id = $1
        AND u.role = $2
        AND u.deleted_at IS NULL
-     ORDER BY u.l_name, u.f_name`,
-      [id, Role.RESPONDER],
-    );
-    return rows;
+    `;
+
+    const values: (string | number | Role)[] = [id, Role.RESPONDER];
+
+    if (cursor) {
+      query += ` AND (u.l_name, u.f_name) > ($3, $4)`;
+      const [lastLName, lastFName] = JSON.parse(
+        Buffer.from(cursor, 'base64').toString(),
+      ) as [string, string];
+      values.push(lastLName, lastFName);
+    }
+
+    query += ` ORDER BY u.l_name, u.f_name LIMIT $${values.length + 1}`;
+    values.push(limit + 1); // Get one extra to check if there are more
+
+    const { rows } = await this.db.query<ResponderTableRow>(query, values);
+
+    const hasMore = rows.length > limit;
+    const data = hasMore ? rows.slice(0, -1) : rows;
+    let nextCursor: string | null = null;
+
+    if (hasMore && data.length > 0) {
+      const lastItem = data[data.length - 1];
+      nextCursor = Buffer.from(
+        JSON.stringify([lastItem.l_name, lastItem.f_name]),
+      ).toString('base64');
+    }
+
+    return { data, nextCursor };
+  }
+
+  async viewAllRespondersBasedOnStatusBranch(
+    id: string,
+    status: AccountStatusEnum,
+    limit: number = 20,
+    cursor: string | null = null,
+  ): Promise<{ data: ResponderTableRow[]; nextCursor: string | null }> {
+    let query = `
+      SELECT
+       u.id,
+       u.f_name,
+       u.l_name,
+       u.m_name,
+       u.role,
+       u.account_status,
+       u.email,
+       p.rank,
+       p.agency,
+       p.availability
+     FROM user_account u
+     JOIN r_profile p ON p.user_id = u.id
+     WHERE u.command_center_id = $1
+       AND u.role = $2
+       AND u.account_status = $3
+       AND u.deleted_at IS NULL
+    `;
+
+    const values: (string | number | Role | AccountStatusEnum)[] = [
+      id,
+      Role.RESPONDER,
+      status,
+    ];
+
+    if (cursor) {
+      query += ` AND (u.l_name, u.f_name) > ($4, $5)`;
+      const [lastLName, lastFName] = JSON.parse(
+        Buffer.from(cursor, 'base64').toString(),
+      ) as [string, string];
+      values.push(lastLName, lastFName);
+    }
+
+    query += ` ORDER BY u.l_name, u.f_name LIMIT $${values.length + 1}`;
+    values.push(limit + 1); // Get one extra to check if there are more
+
+    const { rows } = await this.db.query<ResponderTableRow>(query, values);
+
+    const hasMore = rows.length > limit;
+    const data = hasMore ? rows.slice(0, -1) : rows;
+    let nextCursor: string | null = null;
+
+    if (hasMore && data.length > 0) {
+      const lastItem = data[data.length - 1];
+      nextCursor = Buffer.from(
+        JSON.stringify([lastItem.l_name, lastItem.f_name]),
+      ).toString('base64');
+    }
+
+    return { data, nextCursor };
   }
 
   /**
-   * Soft-delete. The trg_revoke_sessions_on_soft_delete trigger revokes the
-   * responder's sessions and sets availability to off_duty in the same
-   * transaction, so nothing else is needed here.
+   * Deactivates a responder by setting account_status to 'deactivated' and
+   * deleted_at to now(). The trg_revoke_sessions_on_soft_delete trigger revokes
+   * the responder's sessions and sets availability to off_duty in the same
+   * transaction.
    * Returns false if no live responder with that id exists in that branch.
    */
   async deactivateResponder(
@@ -175,7 +266,8 @@ export class CommandCenterRepository {
   ): Promise<boolean> {
     const { rows } = await this.db.query<{ id: string }>(
       `UPDATE user_account
-     SET deleted_at = now()
+     SET deleted_at = now(),
+         account_status = 'deactivated'
      WHERE id = $1
        AND command_center_id = $2
        AND role = $3
@@ -187,9 +279,10 @@ export class CommandCenterRepository {
   }
 
   /**
-   * Restores a soft-deleted responder (the user_identity trigger restores
-   * their identities too). Can throw a 23505 unique violation if the email
-   * or mobile number was registered again while they were deactivated.
+   * Activates a deactivated responder by setting deleted_at to NULL and
+   * account_status to 'active'. The user_identity trigger restores
+   * their identities too.
+   * Returns false if no deactivated responder with that id exists in that branch.
    */
   async activateResponder(
     id: string,
@@ -197,11 +290,13 @@ export class CommandCenterRepository {
   ): Promise<boolean> {
     const { rows } = await this.db.query<{ id: string }>(
       `UPDATE user_account
-     SET deleted_at = NULL
-     WHERE id = $1
-       AND command_center_id = $2
-       AND role = $3
-       AND deleted_at IS NOT NULL
+       SET deleted_at = NULL,
+           account_status = 'active'
+       WHERE id = $1
+         AND command_center_id = $2
+         AND role = $3
+         AND deleted_at IS NOT NULL
+         AND account_status = 'deactivated'
      RETURNING id`,
       [id, commandCenterId, Role.RESPONDER],
     );
@@ -265,6 +360,7 @@ export class CommandCenterRepository {
          AND command_center_id = $2
          AND role = $3
          AND deleted_at IS NULL
+         AND account_status != 'deactivated'
      ),
      revoked AS (
        UPDATE user_session SET is_revoked = true

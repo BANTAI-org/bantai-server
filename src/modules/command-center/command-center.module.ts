@@ -4,9 +4,10 @@ import { CommandCenterService } from './command-center.service';
 import { CommandCenterRepository } from './command-center.repository';
 import { DatabaseModule } from '../../database/database.module';
 import { EmailModule } from '../email/email.module';
+import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 
 @Module({
-  imports: [DatabaseModule, EmailModule],
+  imports: [DatabaseModule, EmailModule, AuditLogsModule],
   controllers: [CommandCenterController],
   providers: [CommandCenterService, CommandCenterRepository],
 })

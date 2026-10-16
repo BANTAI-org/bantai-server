@@ -8,6 +8,10 @@ import { AccountTokenPurposeEnum } from './enums/account-token-purpose.enum';
 import { AuthProviderEnum } from '../responders/enums/auth-provider.enum';
 import { UpdatePasswordData } from './interfaces/update-password.interface';
 import { PasswordType } from './types/get-password.type';
+import {
+  AccountStatusEnum,
+  AccountStatusInterface,
+} from './enums/account-status.enum';
 
 @Injectable()
 export class AuthRepository {
@@ -25,6 +29,14 @@ export class AuthRepository {
 
     const { rows } = await this.db.query<UserAuthRow>(sql, [email]);
     return rows[0] || null;
+  }
+
+  async getAccountStatus(email: string): Promise<AccountStatusEnum | null> {
+    const sql =
+      'SELECT account_status FROM user_account WHERE email = $1 LIMIT 1';
+
+    const result = await this.db.query<AccountStatusInterface>(sql, [email]);
+    return result.rows[0]?.account_status ?? null;
   }
 
   async findUserById(id: string): Promise<UserAuthRow | null> {
@@ -215,10 +227,30 @@ export class AuthRepository {
       ]);
 
       if (purpose === AccountTokenPurposeEnum.ACTIVATION) {
-        await client.query(
-          `INSERT INTO system_audit_log(actor_id, action, target_entity, target_id)
-           VALUES ($1, 'ACTIVATE_ACCOUNT', 'user_account', $1)`,
+        // Lookup actor name and command center id for the user
+        const authResult = await client.query<{
+          f_name: string;
+          l_name: string;
+          command_center_id: string;
+        }>(
+          `SELECT f_name, l_name, command_center_id FROM user_account WHERE id = $1`,
           [user_id],
+        );
+        let actorName: string | null = null;
+        let commandCenterId: string | null = null;
+        if (authResult.rows.length > 0) {
+          const { f_name, l_name, command_center_id } = authResult.rows[0];
+          actorName = `${f_name} ${l_name}`;
+          commandCenterId = command_center_id;
+        }
+
+        await client.query(
+          `INSERT INTO system_audit_log(
+             actor_id, actor_name, command_center_id, action, target_entity, target_id, old_payload, new_payload
+           ) VALUES (
+             $1, $2, $3, 'ACTIVATE_ACCOUNT', 'user_account', $4, null, null
+           )`,
+          [user_id, actorName, commandCenterId, user_id],
         );
       }
 

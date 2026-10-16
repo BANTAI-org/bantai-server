@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -23,6 +24,7 @@ import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { Roles } from '../../common/decorators/role.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AccountStatusEnum } from '../../modules/auth/enums/account-status.enum';
 
 type AuthenticatedRequest = Request & { user: JwtPayload };
 
@@ -68,6 +70,42 @@ export class CommandCenterController {
     userId: string,
   ): Promise<ResponderTableRow[]> {
     return this.commandCenterService.getBranchResponders(userId, centerId);
+  }
+
+  @Get(':centerId/responders/paginated')
+  @Roles(Role.SUPER, Role.ADMIN)
+  async listRespondersPaginated(
+    @Param('centerId', ParseUUIDPipe) centerId: string,
+    @CurrentUser('sub')
+    userId: string,
+    @Query('limit') limit: number = 20,
+    @Query('cursor') cursor: string | null = null,
+  ): Promise<{ data: ResponderTableRow[]; nextCursor: string | null }> {
+    return this.commandCenterService.getBranchRespondersPaginated(
+      userId,
+      centerId,
+      limit,
+      cursor,
+    );
+  }
+
+  @Get(':centerId/responders/status/:status')
+  @Roles(Role.SUPER, Role.ADMIN)
+  async listRespondersByStatusPaginated(
+    @Param('centerId', ParseUUIDPipe) centerId: string,
+    @Param('status') status: AccountStatusEnum,
+    @CurrentUser('sub')
+    userId: string,
+    @Query('limit') limit: number = 20,
+    @Query('cursor') cursor: string | null = null,
+  ): Promise<{ data: ResponderTableRow[]; nextCursor: string | null }> {
+    return this.commandCenterService.getBranchRespondersByStatusPaginated(
+      userId,
+      centerId,
+      status,
+      limit,
+      cursor,
+    );
   }
 
   @Patch(':centerId/responders/:responderId/deactivate')

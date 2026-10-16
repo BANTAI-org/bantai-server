@@ -26,7 +26,7 @@ interface DutyUpdatePayload {
 }
 
 function isDutyUpdatePayload(payload: unknown): payload is DutyUpdatePayload {
-  if (typeof payload !== 'object' || payload === null) {
+  if (!payload || typeof payload !== 'object') {
     return false;
   }
 
@@ -45,7 +45,7 @@ function isDutyUpdatePayload(payload: unknown): payload is DutyUpdatePayload {
  */
 @WebSocketGateway({
   namespace: 'gps',
-  // CORS configuration can be added here if needed
+  cors: { origin: process.env.WS_CORS_ORIGIN?.split(',') ?? [] },
 })
 @Injectable()
 export class GpsGateway
@@ -77,7 +77,7 @@ export class GpsGateway
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {
     this.subscriber = this.redis.duplicate();
-    this.subscriber.on('message', (channel, message) => {
+    this.subscriber.on('message', (channel: string, message: string) => {
       if (channel === 'duty:updates') {
         this.dutySubscriptionCallback?.(channel, message);
         return;
@@ -92,26 +92,29 @@ export class GpsGateway
    * Initialize the gateway: set up handshake authentication and subscribe to duty updates.
    */
   async afterInit(server: Namespace): Promise<void> {
-    // Authentication middleware: verify JWT from handshake
-    server.use((socket, next) => {
+    // Authentication middleware: verify JWT from handshake auth
+    server.use((socket: Socket, next: (err?: Error) => void) => {
       this.authenticateSocket(socket)
         .then((user) => {
           (socket.data as { user?: SocketUser }).user = user;
           next();
         })
-        .catch(() => next(new Error('Unauthorized')));
+        .catch((err: Error | undefined) =>
+          next(err ?? new Error('Unauthorized')),
+        );
     });
 
     // Subscribe to duty updates channel to listen for duty status changes
-    this.dutySubscriptionCallback = (channel, message) => {
+    this.dutySubscriptionCallback = (channel: string, message: string) => {
       try {
         const payload: unknown = JSON.parse(message);
         if (!isDutyUpdatePayload(payload)) {
           throw new Error('Invalid duty update payload');
         }
-        this.handleDutyUpdate(payload.userId, payload.role, payload.status);
-      } catch (error) {
-        this.logger.error(`Failed to parse duty update: ${error}`);
+        const { userId, role, status } = payload;
+        this.handleDutyUpdate(userId, role, status);
+      } catch (err: unknown) {
+        this.logger.error(`Failed to parse duty update: ${String(err)}`);
       }
     };
     await this.subscriber.subscribe('duty:updates');
@@ -129,7 +132,7 @@ export class GpsGateway
       return;
     }
 
-    const { id: userId, role } = user;
+    const { id: userId, role: role } = user;
     if (!this.userSockets.has(userId)) {
       this.userSockets.set(userId, new Set());
     }
@@ -172,7 +175,9 @@ export class GpsGateway
   /**
    * Authenticate socket via JWT from handshake auth or headers.
    */
-  private async authenticateSocket(socket: Socket): Promise<SocketUser> {
+  private async authenticateSocket(
+    socket: Socket,
+  ): Promise<{ id: string; role: Role }> {
     const token =
       (socket.handshake.auth as { token?: string })?.token ||
       socket.handshake.headers.authorization?.split(' ')[1];
@@ -186,7 +191,10 @@ export class GpsGateway
         token,
         { secret: this.config.getOrThrow<string>('JWT_SECRET') },
       );
-      return { id: payload.sub, role: payload.role };
+      return {
+        id: payload.sub,
+        role: payload.role,
+      };
     } catch {
       throw new Error('Invalid token');
     }
@@ -213,8 +221,10 @@ export class GpsGateway
             }
           });
         }
-      } catch (err) {
-        this.logger.error(`Failed to process GPS update for ${userId}: ${err}`);
+      } catch (err: unknown) {
+        this.logger.error(
+          `Failed to process GPS updates for ${userId}: ${String(err)}`,
+        );
       }
     };
 

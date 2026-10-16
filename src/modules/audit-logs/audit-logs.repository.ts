@@ -12,6 +12,7 @@ export class AuditLogsRepository {
   private readonly SELECT_PROJECTION = `
     id,
     actor_id AS "actorId",
+    actor_name AS "actorName",
     command_center_id AS "commandCenterId",
     action,
     target_entity AS "targetEntity",
@@ -24,10 +25,26 @@ export class AuditLogsRepository {
   constructor(private readonly db: DatabaseService) {}
 
   async createAudit(data: CreateAuditLogInput): Promise<SystemAuditLogEntity> {
+    // Lookup actorName from actorId if provided
+    let actorName: string | null = null;
+    if (data.actorId) {
+      const nameResult = await this.db.query<{
+        f_name: string;
+        l_name: string;
+      }>(`SELECT f_name, l_name FROM user_account WHERE id = $1`, [
+        data.actorId,
+      ]);
+      if (nameResult.rows.length > 0) {
+        const { f_name, l_name } = nameResult.rows[0];
+        actorName = `${f_name} ${l_name}`;
+      }
+    }
+
     const sql = `
       INSERT INTO system_audit_log (
         id,
         actor_id,
+        actor_name,
         command_center_id,
         action,
         target_entity,
@@ -42,9 +59,10 @@ export class AuditLogsRepository {
         $4,
         $5,
         $6,
-        $7::jsonb,
+        $7,
         $8::jsonb,
-        COALESCE($9::timestamptz, now())
+        $9::jsonb,
+        COALESCE($10::timestamptz, now())
       )
       RETURNING ${this.SELECT_PROJECTION};
     `;
@@ -52,6 +70,7 @@ export class AuditLogsRepository {
     const params: (string | null)[] = [
       data.id ?? null,
       data.actorId ?? null,
+      actorName,
       data.commandCenterId ?? null,
       data.action,
       data.targetEntity,
