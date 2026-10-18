@@ -324,7 +324,7 @@ export class CommandCenterService {
       actorId,
       centerId,
       responderId,
-      'deactivate',
+      AuditAction.DEACTIVATE_ACCOUNT,
       () =>
         this.commandCenterRepository.deactivateResponder(responderId, centerId),
     );
@@ -339,7 +339,7 @@ export class CommandCenterService {
       actorId,
       centerId,
       responderId,
-      'activate',
+      AuditAction.ACTIVATE_ACCOUNT,
       () =>
         this.commandCenterRepository.activateResponder(responderId, centerId),
     );
@@ -354,7 +354,7 @@ export class CommandCenterService {
       actorId,
       centerId,
       responderId,
-      'revoke the sessions of',
+      AuditAction.AUTH_REVOKE_SESSION,
       () =>
         this.commandCenterRepository.setForSessionRevoke(responderId, centerId),
     );
