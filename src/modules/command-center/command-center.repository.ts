@@ -217,7 +217,6 @@ export class CommandCenterRepository {
      WHERE u.command_center_id = $1
        AND u.role = $2
        AND u.account_status = $3
-       AND u.deleted_at IS NULL
     `;
 
     const values: (string | number | Role | AccountStatusEnum)[] = [
