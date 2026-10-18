@@ -22,8 +22,8 @@ export class DashboardRepository {
         [commandCenterId],
       ),
       this.db.query<{ total: number }>(
-        'SELECT COUNT(*) AS total FROM user_account WHERE account_status = $1 AND command_center_id = $2',
-        ['active', commandCenterId],
+        'SELECT COUNT(*) AS total FROM user_account WHERE account_status = $1 AND command_center_id = $2 AND role = $3',
+        ['active', commandCenterId, 'responder'],
       ),
       this.db.query<{ total: number }>(
         `SELECT COUNT(*) AS total
