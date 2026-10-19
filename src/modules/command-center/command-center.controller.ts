@@ -18,6 +18,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { CommandCenterService } from './command-center.service';
 import { CreateCommandCenterDTO } from './dto/create-command-center.dto';
 import { UpdateCommandCenterDTO } from './dto/update-command-center.dto';
+import { UpdateResponderEmailDTO } from './dto/update-email.dto';
 import { CommandCenterEntity } from './interfaces/command-center.interface';
 import { ResponderTableRow } from './interfaces/responder-tb.interface';
 import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
@@ -172,6 +173,22 @@ export class CommandCenterController {
     );
   }
 
+  @Patch(':centerId/responders/:responderId/email')
+  @Roles(Role.SUPER, Role.ADMIN)
+  async updateResponderEmail(
+    @Param('centerId', ParseUUIDPipe) centerId: string,
+    @Param('responderId', ParseUUIDPipe) responderId: string,
+    @Body() dto: UpdateResponderEmailDTO,
+    @CurrentUser('sub') actorId: string,
+  ): Promise<string> {
+    return await this.commandCenterService.updateEmail(
+      dto.email,
+      responderId,
+      centerId,
+      actorId,
+    );
+  }
+
   @Get('me')
   @Roles(Role.ADMIN, Role.SUPER)
   async getMyCommandCenter(
@@ -182,11 +199,11 @@ export class CommandCenterController {
 
   @Get()
   @Roles(Role.SUPER)
-  async getAllCommandCenters(): Promise<{ id: string; name: string }[]> {
+  async getAllCommandCenters(): Promise<CommandCenterEntity[]> {
     const centers = await this.commandCenterService.getAll();
     if (!centers) {
       return [];
     }
-    return centers.map((c) => ({ id: c.id, name: c.name }));
+    return centers;
   }
 }

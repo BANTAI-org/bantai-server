@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -19,6 +20,7 @@ import { UpdateCommandCenterDTO } from './dto/update-command-center.dto';
 import { UpdateCommandCenterData } from './types/update-command-center-data.types';
 import { CreateCommandCenterData } from './types/create-command-center-data.types';
 import { ResponderTableRow } from './interfaces/responder-tb.interface';
+import { AuthService } from '../auth/auth.service';
 
 // Matches the "expires in 1 hour" copy in EmailService.sendPasswordResetEmail.
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
@@ -41,6 +43,7 @@ export class CommandCenterService {
     private readonly commandCenterRepository: CommandCenterRepository,
     private readonly emailService: EmailService,
     private readonly auditLogsService: AuditLogsService,
+    private readonly authService: AuthService,
   ) {}
 
   private async createAuditLog(
@@ -447,5 +450,57 @@ export class CommandCenterService {
     return await this.commandCenterRepository.findById(
       actorScope.command_center_id,
     );
+  }
+  async updateEmail(
+    email: string,
+    responderId: string,
+    commandCenterId: string,
+    actorId: string,
+  ): Promise<string> {
+    try {
+      const isExistingResponderInBranch =
+        await this.commandCenterRepository.findResponderInBranch(
+          responderId,
+          commandCenterId,
+        );
+      if (
+        !isExistingResponderInBranch ||
+        isExistingResponderInBranch === null
+      ) {
+        throw new BadRequestException();
+      }
+
+      // Get old email for audit logging, then update
+      const oldEmail = await this.commandCenterRepository.updateEmail(
+        responderId,
+        email,
+      );
+
+      // Perform audit logging
+      await this.auditLogsService.createAudit({
+        actorId,
+        commandCenterId,
+        action: AuditAction.UPDATE_USER,
+        targetEntity: 'user_account',
+        targetId: responderId,
+        oldPayload: { email: oldEmail },
+        newPayload: { email: email },
+        // id, createdAt handled by service
+        // actorName omitted from CreateAuditLogInput per type definition
+      });
+
+      await this.authService.createActivationToken(email, responderId);
+
+      // RETURN OLD EMAIL FOR HTTP RESPONSE
+      return oldEmail;
+    } catch (err: unknown) {
+      this.logger.error(
+        'Failed to update responder email',
+        err instanceof Error ? err.stack : err,
+      );
+      throw new InternalServerErrorException(
+        'Failed to update responder email',
+      );
+    }
   }
 }

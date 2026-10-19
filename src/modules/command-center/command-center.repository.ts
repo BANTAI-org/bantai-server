@@ -7,9 +7,14 @@ import { ResponderTableRow } from './interfaces/responder-tb.interface';
 
 import { Role } from '../../common/enums/role-enum';
 import { AccountStatusEnum } from '../../modules/auth/enums/account-status.enum';
+import { AuditLogsService } from '../../modules/audit-logs/audit-logs.service';
+
 @Injectable()
 export class CommandCenterRepository {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly auditLogsService: AuditLogsService,
+  ) {}
 
   private readonly selectFields = `
     id, 
@@ -275,6 +280,66 @@ export class CommandCenterRepository {
       [id, commandCenterId, Role.RESPONDER],
     );
     return rows.length > 0;
+  }
+
+  async updateEmail(id: string, email: string): Promise<string> {
+    // Validate inputs
+    if (!id || !email) {
+      throw new Error('ID and email are required');
+    }
+
+    // Basic email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      throw new Error('Invalid email format');
+    }
+
+    // Get current email for audit logging (old value)
+    const sqlGetCurrent =
+      'SELECT email FROM user_account WHERE id = $1 AND account_status = $2';
+    const currentEmailResult = await this.db.query<{ email: string }>(
+      sqlGetCurrent,
+      [id, AccountStatusEnum.PENDING_ACTIVATION],
+    );
+
+    if (currentEmailResult.rowCount === 0) {
+      throw new Error(
+        `Responder with ID ${id} not found or not in pending_activation status`,
+      );
+    }
+
+    const oldEmail = currentEmailResult.rows[0].email;
+
+    // Update the email
+    const sqlUpdate =
+      'UPDATE user_account SET email = $1 WHERE id = $2 AND account_status = $3';
+    const updateResult = await this.db.query<{ rowCount: number }>(sqlUpdate, [
+      email,
+      id,
+      AccountStatusEnum.PENDING_ACTIVATION,
+    ]);
+
+    if (updateResult.rowCount === 0) {
+      throw new Error(`Failed to update email for responder ID ${id}`);
+    }
+
+    // Return old email for audit logging (as requested)
+    return oldEmail;
+  }
+
+  //Checks if user exists, and if the operation is happening on same branch
+  async findResponderInBranch(
+    id: string,
+    command_center_id: string,
+  ): Promise<string | null> {
+    const sql =
+      'SELECT id FROM user_account WHERE id = $1 AND command_center_id = $2 AND role = $3';
+    const result = await this.db.query<{ id: string }>(sql, [
+      id,
+      command_center_id,
+      Role.RESPONDER,
+    ]);
+    return result.rows[0]?.id ?? null;
   }
 
   /**

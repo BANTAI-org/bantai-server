@@ -260,13 +260,6 @@ export class ResponderRepository {
     return rows[0] ?? null;
   }
 
-  async updateEmail(id: string, email: string): Promise<boolean> {
-    const sql =
-      'UPDATE user_account SET email = $1 WHERE id = $2 AND account_status = $3';
-    const result = await this.db.query(sql, [email, id, 'pending_activation']);
-    return result.rowCount === 1;
-  }
-
   /**
    * Updates the responder's account information.
    * Only m_number and phone_verified_at can be updated through this method

@@ -1,11 +1,12 @@
 export enum AuditAction {
   // Command Center & User Management
-  CREATE_CC = 'CREATE_CC',
-  CREATE_USER = 'CREATE_USER',
-  UPDATE_USER = 'UPDATE_USER',
-  CHANGE_ROLE = 'CHANGE_ROLE',
+  CREATE_CC = 'CREATE_CC', //for super
+  CREATE_USER = 'CREATE_USER', //both
+  UPDATE_USER = 'UPDATE_USER', //both
 
-  // Authentication & Identity
+  CHANGE_ROLE = 'CHANGE_ROLE', // super
+
+  // Authentication & Identity - All for both
   AUTH_LOGIN = 'AUTH_LOGIN',
   AUTH_LOGOUT = 'AUTH_LOGOUT',
   AUTH_REVOKE_SESSION = 'AUTH_REVOKE_SESSION',
