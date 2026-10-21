@@ -230,6 +230,10 @@ export class IncidentService {
     await this.announceStatus(incidentId);
   }
 
+  async findOpenIncidentsByDriver(driverId: string): Promise<IncidentEntity[]> {
+    return this.incidentRepository.findOpenIncidentsByDriver(driverId);
+  }
+
   /**
    * `confirmedById` is the authenticated user who confirmed the arrival, for
    * method 'manual'; pass null for 'gps'. Never accept it from the client.

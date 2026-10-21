@@ -611,6 +611,19 @@ export class IncidentRepository {
     return row ? toIncident(row) : null;
   }
 
+  async findOpenIncidentsByDriver(driverId: string): Promise<IncidentEntity[]> {
+    const rows = await queryRows<IncidentRow>(
+      this.db,
+      `SELECT ${INCIDENT_COLUMNS}
+       FROM incident i
+      WHERE i.driver_id = $1::uuid
+        AND i.status NOT IN ('RESOLVED', 'CANCELLED')
+      ORDER BY i.created_at DESC, i.id DESC`,
+      [driverId],
+    );
+    return rows.map(toIncident);
+  }
+
   /**
    * Incidents in any of the given statuses, newest first, one cursor page at a
    * time. The open-incident index covers non-terminal statuses only, so

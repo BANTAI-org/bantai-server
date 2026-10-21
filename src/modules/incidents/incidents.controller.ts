@@ -12,7 +12,6 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-// TODO: point these four at your real files.
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/role.decorator';
@@ -86,7 +85,6 @@ export class IncidentController {
   // READS (the fixed paths come before :incidentId so "logs" is not an id)
   // ---------------------------------------------------------------------
 
-  /** Every incident in the given statuses, across all centers: supers only. */
   @Get()
   @Roles(Role.SUPER)
   async listByStatus(
@@ -97,6 +95,13 @@ export class IncidentController {
       { limit: query.limit, cursor: query.cursor },
     );
     return CursorPageResponseDto.from(page, (incident) => incident);
+  }
+  @Get('all')
+  @Roles(Role.DRIVER)
+  async getOpenIncidentsForDriver(
+    @CurrentUser('sub') driverId: string,
+  ): Promise<IncidentEntity[]> {
+    return this.incidentService.findOpenIncidentsByDriver(driverId);
   }
 
   /**

@@ -25,6 +25,8 @@
     "migrate:down:all": "dotenv -e .env -- node-pg-migrate down 999"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1153.0",
+    "@aws-sdk/s3-request-presigner": "^3.1153.0",
     "@fastify/cookie": "^11.1.2",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.4",
