@@ -19,6 +19,7 @@ export const IncidentEvents = {
   SEVERITY_CHANGED: 'incident.severity_changed',
   /** Sent to ONE rider: stop heading to / leave the scene. */
   PEER_STAND_DOWN: 'incident.peer_stand_down',
+  TRACKING_UPDATED: 'incident.tracking_updated', // ← NEW
 } as const;
 
 export const ReportEvents = {
@@ -101,4 +102,18 @@ export interface ReportStatusChangedEvent {
   assignedReporterId: string | null;
   reviewedById: string | null;
   updatedAt: string;
+}
+
+/**
+ * Deliberately NOT based on IncidentEventBase: it always targets
+ * Rooms.incident(incidentId), so it carries no audience-picking ids.
+ */
+export interface IncidentTrackingUpdatedEvent {
+  incidentId: string;
+  responderId: string;
+  responderName: string | null;
+  distanceMeters: number;
+  etaSeconds: number;
+  lastSeenAt: string;
+  computedAt: string;
 }

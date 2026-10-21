@@ -4,7 +4,6 @@ import {
   HttpCode,
   HttpStatus,
   Post,
-  Req,
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
@@ -13,11 +12,9 @@ import { Roles } from '../../common/decorators/role.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
-import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { UpdateLocationDto } from './dto/update-location.dto';
 import { RedisService } from './redis.service';
-
-type AuthenticatedRequest = Request & { user: JwtPayload };
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 const bodyPipe = new ValidationPipe({ whitelist: true, transform: true });
 
@@ -35,10 +32,10 @@ export class RedisController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async updateDriver(
     @Body(bodyPipe) dto: UpdateLocationDto,
-    @Req() req: AuthenticatedRequest,
+    @CurrentUser('sub') driverId: string,
   ): Promise<void> {
     await this.redisService.update(
-      req.user.sub,
+      driverId,
       'driver',
       dto,
       dto.accuracy_meters ?? null,
@@ -50,10 +47,10 @@ export class RedisController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async updateResponder(
     @Body(bodyPipe) dto: UpdateLocationDto,
-    @Req() req: AuthenticatedRequest,
+    @CurrentUser('sub') responderId: string,
   ): Promise<void> {
     await this.redisService.update(
-      req.user.sub,
+      responderId,
       'responder',
       dto,
       dto.accuracy_meters ?? null,

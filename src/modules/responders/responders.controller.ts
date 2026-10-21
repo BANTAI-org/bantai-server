@@ -29,6 +29,8 @@ import { OtpRequestResult } from './interfaces/otp-result.interface';
 import { ResetTokenResult } from './interfaces/result-token-result.interface';
 import { UserIdType } from './types/user-id.types';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { GoOnDutyDto } from './dto/go-on-duty.dto';
+import { DutyChangeResponse } from './responders.service';
 
 type AuthenticatedRequest = Request & { user: JwtPayload };
 
@@ -134,5 +136,26 @@ export class RespondersController {
     dto: ResetPasswordDto,
   ): Promise<void> {
     return this.responderService.resetPassword(dto);
+  }
+
+  @Post('duty/on')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(Role.RESPONDER)
+  async goOnDuty(
+    @Body() dto: GoOnDutyDto,
+    @CurrentUser('sub') userId: string,
+  ): Promise<DutyChangeResponse> {
+    return this.responderService.goOnDuty(userId, dto.duration_minutes);
+  }
+
+  @Post('duty/off')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(Role.RESPONDER)
+  async goOffDuty(
+    @CurrentUser('sub') userId: string,
+  ): Promise<DutyChangeResponse> {
+    return this.responderService.goOffDuty(userId);
   }
 }

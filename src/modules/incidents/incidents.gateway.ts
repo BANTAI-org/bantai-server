@@ -18,6 +18,7 @@ import {
   type IncidentPeerRespondedEvent,
   type IncidentStatusChangedEvent,
   type IncidentThreatLevelChangedEvent,
+  type IncidentTrackingUpdatedEvent,
   type IncidentVerifiedEvent,
   ReportEvents,
   type ReportStatusChangedEvent,
@@ -117,12 +118,23 @@ export class IncidentGateway implements OnGatewayInit, OnGatewayConnection {
    * A new incident reaches only the rider it belongs to and supers. Nearby
    * responders and riders learn about it through the wave engine's offers, and
    * command centers only after an escalation.
+   *
+   * The rider's socket is also JOINED to the incident's room here, so any
+   * later tracking update (which targets only Rooms.incident(id)) reaches
+   * them without needing a separate socketsJoin call. Mobile clients that
+   * connect late rely on the polling fallback (GET /incidents/:id/tracking).
    */
   @OnEvent(IncidentEvents.CREATED)
   onIncidentCreated(event: IncidentCreatedEvent): void {
     const rooms = [Rooms.role('super')];
     if (event.driverId) rooms.push(Rooms.user(event.driverId));
     this.emit(rooms, IncidentEvents.CREATED, event);
+
+    if (event.driverId) {
+      void this.server
+        .in(Rooms.user(event.driverId))
+        .socketsJoin(Rooms.incident(event.incidentId));
+    }
   }
 
   /**
@@ -170,6 +182,28 @@ export class IncidentGateway implements OnGatewayInit, OnGatewayConnection {
     if (event.driverId) rooms.push(Rooms.user(event.driverId));
     if (event.claimedById) rooms.push(Rooms.user(event.claimedById));
     this.emit(rooms, IncidentEvents.PEER_RESPONDED, event);
+  }
+
+  /**
+   * Live responder position ("Maria Santos is on the way, ~4 min").
+   *
+   * Deliberately targets ONLY Rooms.incident(incidentId) — NOT the audience()
+   * union. That means:
+   *   * The rider receives it (joined to the incident room on CREATED).
+   *   * A command center receives it after an escalation (onEscalated).
+   *   * Supers do NOT receive every responder's live position, which is a
+   *     deliberate privacy choice: tracking is for the people involved.
+   *
+   * Emitted by TrackingService on every GPS ping from an active claimant.
+   * Rate is bounded by the responder's GPS ping frequency (typically 3–5 s).
+   */
+  @OnEvent(IncidentEvents.TRACKING_UPDATED)
+  onTrackingUpdated(event: IncidentTrackingUpdatedEvent): void {
+    this.emit(
+      [Rooms.incident(event.incidentId)],
+      IncidentEvents.TRACKING_UPDATED,
+      event,
+    );
   }
 
   // ---------------------------------------------------------------------

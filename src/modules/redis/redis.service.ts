@@ -93,6 +93,7 @@ export class RedisService {
       .pipeline()
       .del(lastKey(userId))
       .zrem(geoKey(role), userId)
+      .hdel('tracking:claimant', userId)
       .exec();
     this.assertPipelineOk(results);
   }

@@ -1,0 +1,162 @@
+BANTAI INCIDENT ENDPOINTS
+Frontend integration reference
+
+API BASE URL
+https://www.bantai.online/api/v1
+
+All paths below are appended to the API base URL. Replace {incidentId} with
+the ID of the incident.
+
+AUTHENTICATION
+Send a valid access token with each request:
+Authorization: Bearer <access-token>
+
+The backend gets the acting user's ID from the authenticated token. Do not send
+responder, driver, verifier, resolver, or peer user IDs in request bodies.
+
+ENDPOINT SUMMARY
+
+1. Claim incident
+   Method: POST
+   URL: https://www.bantai.online/api/v1/incidents/{incidentId}/claim
+   Role: RESPONDER
+   Request body: None
+   Success: 204 No Content (empty response body)
+
+2. Mark responder en route
+   Method: POST
+   URL: https://www.bantai.online/api/v1/incidents/{incidentId}/en-route
+   Role: RESPONDER
+   Request body: None
+   Success: 204 No Content (empty response body)
+
+3. Mark responder arrived
+   Method: POST
+   URL: https://www.bantai.online/api/v1/incidents/{incidentId}/arrived
+   Role: RESPONDER
+   Request body:
+   {
+     "method": "manual"
+   }
+   The method must be "manual" or "gps".
+   Success: 204 No Content (empty response body)
+
+4. Stand down responder
+   Method: POST
+   URL: https://www.bantai.online/api/v1/incidents/{incidentId}/stand-down
+   Role: RESPONDER
+   Request body: None
+   Success: 204 No Content (empty response body)
+
+5. Record peer response
+   Method: POST
+   URL: https://www.bantai.online/api/v1/incidents/{incidentId}/peer-response
+   Role: DRIVER
+   Request body:
+   {
+     "status": "acknowledged"
+   }
+   Allowed status values:
+   - "acknowledged"
+   - "en_route"
+   - "on_scene"
+   - "stood_down"
+   "notified" is not accepted.
+   Success: 204 No Content (empty response body)
+
+6. Request incident verification
+   Method: POST
+   URL: https://www.bantai.online/api/v1/incidents/{incidentId}/request-verification
+   Role: RESPONDER
+   Request body: None
+   Success: 204 No Content (empty response body)
+
+7. Verify incident
+   Method: POST
+   URL: https://www.bantai.online/api/v1/incidents/{incidentId}/verify
+   Roles: RESPONDER, ADMIN, SUPER
+   Request body (notes are optional):
+   {
+     "notes": "Optional verification notes"
+   }
+   "notes" may be omitted or null and is limited to 2,000 characters.
+   An empty JSON object is also valid:
+   {}
+   Success: 204 No Content (empty response body)
+
+8. Resolve incident
+   Method: POST
+   URL: https://www.bantai.online/api/v1/incidents/{incidentId}/resolve
+   Roles: RESPONDER, ADMIN, SUPER
+   Request body:
+   {
+     "outcome": "confirmed"
+   }
+   Allowed outcome values:
+   - "confirmed"
+   - "false_positive"
+   "unresolved" is not accepted when resolving.
+   Success: 204 No Content (empty response body)
+
+9. Update threat level
+   Method: PATCH
+   URL: https://www.bantai.online/api/v1/incidents/{incidentId}/threat-level
+   Roles: RESPONDER, ADMIN, SUPER
+   Request body:
+   {
+     "threat_level": "ACTIVE_THREAT"
+   }
+   Allowed threat_level values:
+   - "ACTIVE_THREAT"
+   - "DE_ESCALATED"
+   - "CLEAR"
+   Success: 204 No Content (empty response body)
+   Note: A responder must have claimed the incident. Admins and supers may
+   update it without being the claimant.
+
+10. Update incident severity
+    Method: PATCH
+    URL: https://www.bantai.online/api/v1/incidents/{incidentId}/severity
+    Roles: RESPONDER, ADMIN, SUPER
+    Request body:
+    {
+      "severity": "SERIOUS"
+    }
+    Allowed severity values:
+    - "UNKNOWN"
+    - "MINOR"
+    - "SERIOUS"
+    - "CRITICAL"
+    Success: 204 No Content (empty response body)
+    Note: The backend allows the claimant, an admin, or a super, subject to
+    repository-level authorization rules.
+
+11. Escalate incident
+    Method: POST
+    URL: https://www.bantai.online/api/v1/incidents/{incidentId}/escalate
+    Roles: RESPONDER, ADMIN, SUPER
+    Request body:
+    {
+      "command_center_id": "00000000-0000-4000-8000-000000000000",
+      "reason": "MANUAL_INTERVENTION",
+      "notes": "Optional escalation notes"
+    }
+    Required fields:
+    - "command_center_id": UUID of the command center
+    - "reason": "SLA_TIMEOUT" or "MANUAL_INTERVENTION"
+    Optional field:
+    - "notes": may be omitted or null; maximum 2,000 characters
+    Success: 201 Created
+    Response body:
+    {
+      "id": "<escalation-id>"
+    }
+    Note: A responder must have claimed the incident. Admins and supers may
+    escalate it without being the claimant.
+
+COMMON NOTES
+- {incidentId} is a path parameter, not part of the JSON body.
+- Requests with no body should omit it (or send an empty body).
+- For 204 responses, expect no JSON response body.
+- Other failures (for example, invalid input, unauthenticated, unauthorized,
+  or invalid incident state) return an error response rather than 204.
