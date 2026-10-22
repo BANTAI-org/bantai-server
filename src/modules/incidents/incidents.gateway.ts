@@ -24,6 +24,7 @@ import {
   type ReportStatusChangedEvent,
   Rooms,
 } from './events/incident-events';
+import type { NearbyUser } from '../redis/redis.service';
 
 /** What the handshake middleware stores on every authenticated socket. */
 export interface SocketUser {
@@ -204,6 +205,29 @@ export class IncidentGateway implements OnGatewayInit, OnGatewayConnection {
       IncidentEvents.TRACKING_UPDATED,
       event,
     );
+  }
+
+  /**
+   * Peer Dispatch: "2 riders need help within 3km".
+   * Emitted by PeerDispatchService after it saves to incident_peer_response.
+   * Sent DIRECTLY to the specific drivers' rooms, not a public room.
+   */
+  @OnEvent('peer.notified')
+  onPeerNotified(event: {
+    incidentId: string;
+    nearbyDrivers: NearbyUser[];
+  }): void {
+    for (const driver of event.nearbyDrivers) {
+      this.emit(
+        [Rooms.user(driver.user_id)],
+        'incident.peer_nearby', // The event name the Flutter app will listen to
+        {
+          incidentId: event.incidentId,
+          distanceMeters: driver.distance_meters,
+          // Add locationName, threat_type, etc. here if you query them
+        },
+      );
+    }
   }
 
   // ---------------------------------------------------------------------
