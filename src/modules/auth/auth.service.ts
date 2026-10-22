@@ -53,6 +53,13 @@ export class AuthService {
     private readonly googleService: GoogleService,
   ) {}
 
+  /**
+   * @description Constructs the JWT payload.
+   * @param {string} userId - The user's UUID.
+   * @param {Role} role - The user's role.
+   * @param {string | null} [commandCenterId] - Optional command center ID.
+   * @returns {JwtPayload}
+   */
   private createPayload(
     userId: string,
     role: Role,
@@ -65,10 +72,22 @@ export class AuthService {
     };
   }
 
+  /**
+   * @description Hashes a token using SHA-256.
+   * @param {string} token - The raw token.
+   * @returns {string} The hashed token.
+   */
   private hashToken(token: string): string {
     return crypto.createHash('sha256').update(token).digest('hex');
   }
 
+  /**
+   * @description Signs a new access token and refresh token pair.
+   * @param {string} userId - The user's UUID.
+   * @param {Role} role - The user's role.
+   * @param {string | null} [commandCenterId] - Optional command center ID.
+   * @returns {Promise<SignedTokens>} The signed tokens and refresh metadata.
+   */
   private async signTokens(
     userId: string,
     role: Role,
@@ -110,6 +129,13 @@ export class AuthService {
     return { accessToken, refreshToken, refreshTokenHash, refreshExpiresAt };
   }
 
+  /**
+   * @description Generates tokens and persists a new session in the database.
+   * @param {string} userId - The user's UUID.
+   * @param {Role} role - The user's role.
+   * @param {string | null} [commandCenterId] - Optional command center ID.
+   * @returns {Promise<AuthTokens>}
+   */
   async generateTokens(
     userId: string,
     role: Role,
@@ -128,6 +154,12 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
+  /**
+   * @description Authenticates a user using email and password.
+   * @param {EmailPasswordDto} dto - The login credentials.
+   * @returns {Promise<AuthTokens>}
+   * @throws {UnauthorizedException} If credentials are invalid.
+   */
   async manualLogin(dto: EmailPasswordDto): Promise<AuthTokens> {
     const { email, password } = dto;
 
@@ -174,6 +206,12 @@ export class AuthService {
     }
   }
 
+  /**
+   * @description Generates a raw action token (activation/reset) and saves its hash.
+   * @param {string} userId - The user's UUID.
+   * @param {AccountTokenPurposeEnum} purpose - The token's purpose.
+   * @returns {Promise<string>} The raw token to be sent via email.
+   */
   private async generateActionToken(
     userId: string,
     purpose: AccountTokenPurposeEnum,
@@ -197,6 +235,12 @@ export class AuthService {
     return rawToken;
   }
 
+  /**
+   * @description Creates an activation token and sends it via email.
+   * @param {string} userId - The user's UUID.
+   * @param {string} email - The user's email.
+   * @returns {Promise<void>}
+   */
   async createActivationToken(userId: string, email: string): Promise<void> {
     const state = await this.authRepository.checkUserActivationState(userId);
 
@@ -228,6 +272,12 @@ export class AuthService {
     }
   }
 
+  /**
+   * @description Creates a password reset token and sends it via email.
+   * @param {string} userId - The user's UUID.
+   * @param {string} email - The user's email.
+   * @returns {Promise<void>}
+   */
   async createPasswordResetToken(userId: string, email: string): Promise<void> {
     const state = await this.authRepository.checkUserActivationState(userId);
 
@@ -256,12 +306,23 @@ export class AuthService {
     }
   }
 
+  /**
+   * @description Masks an email address for display (e.g., u***@example.com).
+   * @param {string} email - The email to mask.
+   * @returns {string} The masked email.
+   */
   private maskEmail(email: string): string {
     const [local, domain] = email.split('@');
     if (!local || !domain) return '***';
     return `${local[0]}***@${domain}`;
   }
 
+  /**
+   * @description Verifies an action token and returns the masked email of its owner.
+   * @param {string} rawToken - The raw token.
+   * @param {AccountTokenPurposeEnum} purpose - The token's purpose.
+   * @returns {Promise<{ maskedEmail: string }>}
+   */
   private async verifyActionToken(
     rawToken: string,
     purpose: AccountTokenPurposeEnum,
@@ -279,12 +340,22 @@ export class AuthService {
     return { maskedEmail: this.maskEmail(match.email) };
   }
 
+  /**
+   * @description Verifies an account activation token.
+   * @param {string} rawToken - The raw token from the email link.
+   * @returns {Promise<{ maskedEmail: string }>}
+   */
   async verifyActivationToken(
     rawToken: string,
   ): Promise<{ maskedEmail: string }> {
     return this.verifyActionToken(rawToken, AccountTokenPurposeEnum.ACTIVATION);
   }
 
+  /**
+   * @description Verifies a password reset token.
+   * @param {string} rawToken - The raw token from the email link.
+   * @returns {Promise<{ maskedEmail: string }>}
+   */
   async verifyPasswordResetToken(
     rawToken: string,
   ): Promise<{ maskedEmail: string }> {
@@ -294,6 +365,13 @@ export class AuthService {
     );
   }
 
+  /**
+   * @description Redeems an action token by consuming it and setting a new password.
+   * @param {string} rawToken - The raw token.
+   * @param {string} newPassword - The new plaintext password.
+   * @param {AccountTokenPurposeEnum} purpose - The token's purpose.
+   * @returns {Promise<void>}
+   */
   private async redeemActionToken(
     rawToken: string,
     newPassword: string,
@@ -313,6 +391,12 @@ export class AuthService {
     }
   }
 
+  /**
+   * @description Activates an account and sets its initial password.
+   * @param {string} rawToken - The raw token.
+   * @param {string} newPassword - The new plaintext password.
+   * @returns {Promise<void>}
+   */
   async activateAccount(rawToken: string, newPassword: string): Promise<void> {
     await this.redeemActionToken(
       rawToken,
@@ -321,6 +405,12 @@ export class AuthService {
     );
   }
 
+  /**
+   * @description Resets a user's password using a valid reset token.
+   * @param {string} rawToken - The raw token.
+   * @param {string} newPassword - The new plaintext password.
+   * @returns {Promise<void>}
+   */
   async resetPassword(rawToken: string, newPassword: string): Promise<void> {
     await this.redeemActionToken(
       rawToken,
@@ -329,6 +419,13 @@ export class AuthService {
     );
   }
 
+  /**
+   * @description Refreshes an access token using a valid refresh token.
+   * Rotates the refresh token (old one is deleted, new one is issued).
+   * @param {string} token - The raw refresh token.
+   * @returns {Promise<AuthTokens>}
+   * @throws {UnauthorizedException} If the token is invalid, expired, or revoked.
+   */
   async refreshToken(token: string): Promise<AuthTokens> {
     try {
       await this.jwtService.verifyAsync(token, {
@@ -373,6 +470,29 @@ export class AuthService {
     }
   }
 
+  /**
+   * @description Logs out a user by destroying their current session.
+   * @param {string} refreshToken - The raw refresh token from the client's cookie.
+   * @returns {Promise<void>}
+   */
+  async logout(refreshToken: string): Promise<void> {
+    try {
+      const tokenHash = this.hashToken(refreshToken);
+      await this.authRepository.deleteSessionByHash(tokenHash);
+    } catch (err: unknown) {
+      this.logger.error(
+        `Error during logout`,
+        err instanceof Error ? err.stack : err,
+      );
+      throw new InternalServerErrorException('Logout failed.');
+    }
+  }
+
+  /**
+   * @description Authenticates a user using a Google ID token.
+   * @param {string} socialIdToken - The Google ID token.
+   * @returns {Promise<AuthTokens>}
+   */
   async googleLogin(socialIdToken: string): Promise<AuthTokens> {
     try {
       const googleIdentity =
@@ -390,7 +510,6 @@ export class AuthService {
         throw new NotFoundException('Account not found.');
       }
 
-      // Check account soft-delete status BEFORE writing last_sign_in_at to DB
       if (user.deleted_at !== null) {
         this.logger.warn(
           `Deactivated Google user attempted login: ${googleIdentity.email}`,
@@ -422,6 +541,13 @@ export class AuthService {
     }
   }
 
+  /**
+   * @description Links a social provider account to an existing user.
+   * @param {string} userId - The user's UUID.
+   * @param {AuthProviderEnum} provider - The provider name.
+   * @param {string} socialIdToken - The provider's ID token.
+   * @returns {Promise<void>}
+   */
   async linkSocialAccount(
     userId: string,
     provider: AuthProviderEnum,
@@ -480,6 +606,13 @@ export class AuthService {
     }
   }
 
+  /**
+   * @description Unlinks a social provider from a user's account.
+   * Prevents lockout if it's the user's only authentication method.
+   * @param {string} userId - The user's UUID.
+   * @param {AuthProviderEnum} provider - The provider name.
+   * @returns {Promise<void>}
+   */
   async unlinkSocialAccount(
     userId: string,
     provider: AuthProviderEnum,
@@ -508,6 +641,13 @@ export class AuthService {
       );
     }
   }
+
+  /**
+   * @description Checks if an account exists and is in a valid state for authentication.
+   * @param {string} email - The user's email.
+   * @returns {Promise<boolean>} True if valid.
+   * @throws {NotFoundException | ForbiddenException | UnauthorizedException}
+   */
   async checkAccountExistenceAndStatus(email: string): Promise<boolean> {
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) {

@@ -10,17 +10,14 @@ import { IncidentGateway } from './incidents.gateway';
 import { IncidentService } from './incidents.service';
 import { IncidentRepository } from './incidents.repository';
 import { IncidentReportRepository } from './incidents-report.repository';
+import { PeerDispatchService } from './peer-dispatch.service';
 import { TrackingService } from './incident-tracking.service';
+
 @Module({
   imports: [
     DatabaseModule,
     AuthModule,
-    // Provides RedisService (used by TrackingService.computeTracking) and
-    // REDIS_CLIENT (used by TrackingService for the claimant hash and the
-    // gps:updates:* psubscribe connection). Must export both.
     RedisModule,
-    // For the gateway: it verifies the socket's access token itself. The
-    // secret is passed per call (as AuthService does), so no default is set.
     JwtModule.register({}),
     ConfigModule,
   ],
@@ -31,6 +28,7 @@ import { TrackingService } from './incident-tracking.service';
     IncidentReportRepository,
     IncidentGateway,
     TrackingService,
+    PeerDispatchService,
   ],
   exports: [IncidentService, TrackingService],
 })

@@ -17,28 +17,40 @@ import {
 export class AuthRepository {
   constructor(private readonly db: DatabaseService) {}
 
+  /**
+   * @description Finds a user by their email address for local login.
+   * Includes account_status to reject pending accounts before password checks.
+   * @param {string} email - The user's email.
+   * @returns {Promise<UserAuthRow | null>} The user row, or null if not found.
+   */
   async findUserByEmail(email: string): Promise<UserAuthRow | null> {
-    // account_status is selected so login can reject pending_activation
-    // accounts (which have a NULL password_hash) before comparing.
     const sql = `
       SELECT id, password_hash, role, account_status, deleted_at, command_center_id
       FROM user_account 
       WHERE email = $1 AND deleted_at IS NULL
       LIMIT 1;
     `;
-
     const { rows } = await this.db.query<UserAuthRow>(sql, [email]);
     return rows[0] || null;
   }
 
+  /**
+   * @description Retrieves the current account status of a user by email.
+   * @param {string} email - The user's email.
+   * @returns {Promise<AccountStatusEnum | null>} The account status, or null.
+   */
   async getAccountStatus(email: string): Promise<AccountStatusEnum | null> {
     const sql =
       'SELECT account_status FROM user_account WHERE email = $1 LIMIT 1';
-
     const result = await this.db.query<AccountStatusInterface>(sql, [email]);
     return result.rows[0]?.account_status ?? null;
   }
 
+  /**
+   * @description Finds a user by their ID. Used for refreshing tokens and session validation.
+   * @param {string} id - The user's UUID.
+   * @returns {Promise<UserAuthRow | null>} The user row, or null if not found.
+   */
   async findUserById(id: string): Promise<UserAuthRow | null> {
     const sql = `
       SELECT id, email, password_hash, role, account_status, deleted_at, command_center_id
@@ -50,6 +62,16 @@ export class AuthRepository {
     return rows[0] || null;
   }
 
+  /**
+   * @description Creates a new refresh session.
+   * For non-super accounts, it enforces a single active session by deleting
+   * all previous sessions before inserting the new one.
+   * @param {string} userId - The user's UUID.
+   * @param {string} refreshTokenHash - The hashed refresh token.
+   * @param {Date} expiresAt - The token's expiration date.
+   * @param {Role} role - The user's role (Super admins keep multiple sessions).
+   * @returns {Promise<void>}
+   */
   async createSession(
     userId: string,
     refreshTokenHash: string,
@@ -66,10 +88,14 @@ export class AuthRepository {
       INSERT INTO user_session (user_id, refresh_token_hash, expires_at)
       VALUES ($1, $2, $3);
     `;
-
     await this.db.query(sql, [userId, refreshTokenHash, expiresAt]);
   }
 
+  /**
+   * @description Finds a user by a valid, non-expired, non-revoked refresh token hash.
+   * @param {string} hash - The hashed refresh token.
+   * @returns {Promise<UserAuthRow | null>} The user row if the session is valid, else null.
+   */
   async findUserByRefreshTokenHash(hash: string): Promise<UserAuthRow | null> {
     const sql = `
       SELECT u.id, u.password_hash, u.role, u.deleted_at, u.command_center_id 
@@ -81,18 +107,26 @@ export class AuthRepository {
         AND u.deleted_at IS NULL
       LIMIT 1;
     `;
-
     const { rows } = await this.db.query<UserAuthRow>(sql, [hash]);
-
     return rows[0] || null;
   }
 
-  async deleteSessionByHash(hash: string): Promise<void> {
+  /**
+   * @description Destroys a specific session by deleting it from the database.
+   * @param {string} hash - The hashed refresh token.
+   * @returns {Promise<boolean>} True if a session was deleted, false otherwise.
+   */
+  async deleteSessionByHash(hash: string): Promise<boolean> {
     const sql = `DELETE FROM user_session WHERE refresh_token_hash = $1`;
-
-    await this.db.query(sql, [hash]);
+    const result = await this.db.query(sql, [hash]);
+    return (result.rowCount ?? 0) > 0;
   }
 
+  /**
+   * @description Checks the activation status of a user account.
+   * @param {string} id - The user's UUID.
+   * @returns {Promise<ActivationStateRow>} The account status row.
+   */
   async checkUserActivationState(id: string): Promise<ActivationStateRow> {
     const sql = 'SELECT account_status FROM user_account WHERE id = $1';
     const { rows } = await this.db.query<ActivationStateRow>(sql, [id]);
@@ -100,10 +134,11 @@ export class AuthRepository {
   }
 
   /**
-   * For the two GET verify endpoints. Returns the token's owner only if
-   * the token is live AND the account is in the state that purpose
-   * requires (activation -> pending_activation, reset -> active), so a
-   * token can't be used against the wrong kind of account.
+   * @description Finds a live action token (activation/reset) and returns its owner.
+   * Ensures the token is not expired, not used, and matches the account's current state.
+   * @param {string} tokenHash - The hashed token.
+   * @param {AccountTokenPurposeEnum} purpose - The token's intended purpose.
+   * @returns {Promise<{ user_id: string; email: string } | null>}
    */
   async findLiveTokenWithUser(
     tokenHash: string,
@@ -132,8 +167,10 @@ export class AuthRepository {
   }
 
   /**
-   * Looks up a user by third-party provider identity (e.g. Google, Apple)
-   * in the decoupled `user_identity` table.
+   * @description Looks up a user by third-party provider identity (e.g., Google).
+   * @param {string} providerId - The ID from the provider (e.g., Google ID).
+   * @param {AuthProviderEnum} authProvider - The provider name.
+   * @returns {Promise<UserAuthRow | null>}
    */
   async findUserBySocialIdentity(
     providerId: string,
@@ -149,7 +186,6 @@ export class AuthRepository {
         AND u.deleted_at IS NULL
       LIMIT 1;
     `;
-
     const { rows } = await this.db.query<UserAuthRow>(sql, [
       providerId,
       authProvider,
@@ -158,8 +194,10 @@ export class AuthRepository {
   }
 
   /**
-   * Issues a new activation / reset token, replacing any live one for
-   * the same user and purpose, in ONE transaction.
+   * @description Issues a new action token, replacing any live token for the same user/purpose.
+   * Runs in a transaction with row locking to prevent race conditions.
+   * @param {CreateActivationTokenData} data - The token data.
+   * @returns {Promise<void>}
    */
   async replaceAccountActionToken(
     data: CreateActivationTokenData,
@@ -184,7 +222,12 @@ export class AuthRepository {
   }
 
   /**
-   * For the two POST submit endpoints.
+   * @description Consumes an action token, updates the user's password, activates the account,
+   * and destroys all active sessions. Runs entirely in a single transaction.
+   * @param {string} tokenHash - The hashed token.
+   * @param {AccountTokenPurposeEnum} purpose - The token's purpose.
+   * @param {string} passwordHash - The newly hashed password.
+   * @returns {Promise<{ user_id: string } | null>}
    */
   async consumeTokenAndSetPassword(
     tokenHash: string,
@@ -227,7 +270,6 @@ export class AuthRepository {
       ]);
 
       if (purpose === AccountTokenPurposeEnum.ACTIVATION) {
-        // Lookup actor name and command center id for the user
         const authResult = await client.query<{
           f_name: string;
           l_name: string;
@@ -259,7 +301,14 @@ export class AuthRepository {
   }
 
   /**
-   * Atomically rotates a refresh session.
+   * @description Atomically rotates a refresh session. Deletes the old session
+   * and inserts the new one in a transaction.
+   * @param {string} userId - The user's UUID.
+   * @param {string} oldHash - The old refresh token hash.
+   * @param {string} newHash - The new refresh token hash.
+   * @param {Date} expiresAt - The new expiration date.
+   * @param {Role} role - The user's role.
+   * @returns {Promise<void>}
    */
   async atomicSession(
     userId: string,
@@ -287,25 +336,35 @@ export class AuthRepository {
       );
     });
   }
+
+  /**
+   * @description Updates the last sign-in timestamp for a social identity.
+   * @param {string} userId - The user's UUID.
+   * @param {AuthProviderEnum} provider - The provider name.
+   * @param {string} providerId - The provider-specific ID.
+   * @returns {Promise<void>}
+   */
   async updateIdentityLastSignIn(
     userId: string,
     provider: AuthProviderEnum,
     providerId: string,
   ): Promise<void> {
     const sql = `
-    UPDATE user_identity
-    SET last_sign_in_at = NOW()
-    WHERE user_id = $1 AND provider = $2 AND provider_id = $3 AND deleted_at IS NULL;
-  `;
+      UPDATE user_identity
+      SET last_sign_in_at = NOW()
+      WHERE user_id = $1 AND provider = $2 AND provider_id = $3 AND deleted_at IS NULL;
+    `;
     await this.db.query(sql, [userId, provider, providerId]);
   }
 
-  // auth.repository.ts
-
   /**
-   * Inserts a new identity record linked to an existing user.
+   * @description Inserts a new social identity record linked to an existing user.
+   * @param {string} userId - The user's UUID.
+   * @param {AuthProviderEnum} provider - The provider name.
+   * @param {string} providerId - The provider-specific ID.
+   * @param {string} providerEmail - The email from the provider.
+   * @returns {Promise<void>}
    */
-  // auth.repository.ts
   async linkUserIdentity(
     userId: string,
     provider: AuthProviderEnum,
@@ -313,43 +372,50 @@ export class AuthRepository {
     providerEmail: string,
   ): Promise<void> {
     const sql = `
-    INSERT INTO user_identity (user_id, provider, provider_id, provider_email)
-    VALUES ($1, $2, $3, $4);
-  `;
+      INSERT INTO user_identity (user_id, provider, provider_id, provider_email)
+      VALUES ($1, $2, $3, $4);
+    `;
     await this.db.query(sql, [userId, provider, providerId, providerEmail]);
   }
+
   /**
-   * Soft-deletes a linked social identity for a user.
+   * @description Soft-deletes a linked social identity for a user.
+   * @param {string} userId - The user's UUID.
+   * @param {AuthProviderEnum} provider - The provider name.
+   * @returns {Promise<boolean>} True if unlinked, false if not found.
    */
   async unlinkUserIdentity(
     userId: string,
     provider: AuthProviderEnum,
   ): Promise<boolean> {
     const sql = `
-    UPDATE user_identity
-    SET deleted_at = NOW()
-    WHERE user_id = $1 AND provider = $2 AND deleted_at IS NULL;
-  `;
+      UPDATE user_identity
+      SET deleted_at = NOW()
+      WHERE user_id = $1 AND provider = $2 AND deleted_at IS NULL;
+    `;
     const { rowCount } = await this.db.query(sql, [userId, provider]);
     return (rowCount ?? 0) > 0;
   }
 
   /**
-   * Checks authentication methods for account lockout prevention.
+   * @description Checks authentication methods (password vs linked providers)
+   * to prevent a user from locking themselves out.
+   * @param {string} userId - The user's UUID.
+   * @returns {Promise<{ hasPassword: boolean; linkedProvidersCount: number }>}
    */
   async getUserAuthSummary(userId: string): Promise<{
     hasPassword: boolean;
     linkedProvidersCount: number;
   }> {
     const sql = `
-    SELECT 
-      (u.password_hash IS NOT NULL) AS "hasPassword",
-      COUNT(i.id)::int AS "linkedProvidersCount"
-    FROM user_account u
-    LEFT JOIN user_identity i ON u.id = i.user_id AND i.deleted_at IS NULL
-    WHERE u.id = $1 AND u.deleted_at IS NULL
-    GROUP BY u.id;
-  `;
+      SELECT 
+        (u.password_hash IS NOT NULL) AS "hasPassword",
+        COUNT(i.id)::int AS "linkedProvidersCount"
+      FROM user_account u
+      LEFT JOIN user_identity i ON u.id = i.user_id AND i.deleted_at IS NULL
+      WHERE u.id = $1 AND u.deleted_at IS NULL
+      GROUP BY u.id;
+    `;
     const { rows } = await this.db.query<{
       hasPassword: boolean;
       linkedProvidersCount: number;
@@ -358,21 +424,26 @@ export class AuthRepository {
     return rows[0] ?? { hasPassword: false, linkedProvidersCount: 0 };
   }
 
+  /**
+   * @description Updates the user's password hash.
+   * @param {UpdatePasswordData} data - Contains user ID and new hashed password.
+   * @returns {Promise<boolean>} True if updated, false otherwise.
+   */
   async updatePassword(data: UpdatePasswordData): Promise<boolean> {
     const { id, new_password } = data;
-
     const sql = 'UPDATE user_account SET password_hash = $1 WHERE id = $2';
-
     const result = await this.db.query(sql, [new_password, id]);
-
     return result.rowCount === 1;
   }
 
+  /**
+   * @description Retrieves the user's current password hash.
+   * @param {string} id - The user's UUID.
+   * @returns {Promise<PasswordType>}
+   */
   async getPassword(id: string): Promise<PasswordType> {
     const sql = 'SELECT password_hash FROM user_account WHERE id = $1';
-
     const result = await this.db.query<PasswordType>(sql, [id]);
-
     return result.rows[0];
   }
 }

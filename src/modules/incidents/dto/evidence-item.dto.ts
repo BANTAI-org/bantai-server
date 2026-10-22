@@ -7,20 +7,21 @@ import {
   Matches,
   MaxLength,
   Min,
-  ValidateIf,
+  Validate,
 } from 'class-validator';
 import { MaxByteLength } from '../utils/max-byte-lenght.util';
+import { HasKeyOrUrlConstraint } from '../validators/has-key-or-url-constraint.validator';
+
 /**
  * One evidence item. Mirrors is_valid_incident_evidence() (migration 008):
  * an item needs a non-blank "key" (R2 object key) and/or a non-blank "url".
- * Prefer "key" for R2 objects; "url" is for evidence hosted elsewhere.
- * Every other field is free-form metadata the database does not check.
  */
 export class IncidentEvidenceItemDto {
-  // Required unless a url is supplied instead; if present it is always checked.
-  @ValidateIf(
-    (o: IncidentEvidenceItemDto) => o.url === undefined || o.key !== undefined,
-  )
+  // Dummy property used solely to trigger class-level validation
+  @Validate(HasKeyOrUrlConstraint)
+  readonly _hasKeyOrUrl?: never;
+
+  @IsOptional()
   @IsString()
   @Matches(/\S/, { message: 'key must not be blank' })
   @MaxByteLength(1024) // S3/R2 key limit
@@ -29,9 +30,7 @@ export class IncidentEvidenceItemDto {
   })
   key?: string;
 
-  @ValidateIf(
-    (o: IncidentEvidenceItemDto) => o.key === undefined || o.url !== undefined,
-  )
+  @IsOptional()
   @IsString()
   @Matches(/\S/, { message: 'url must not be blank' })
   @MaxLength(2048)

@@ -8,7 +8,7 @@ import { PeerResponseStatus } from '../enums/peer-response-status.enum';
  */
 export class RecordPeerResponseDto {
   @IsEnum(PeerResponseStatus)
-  @NotEquals('notified', {
+  @NotEquals(PeerResponseStatus.NOTIFIED, {
     message: 'status cannot be set back to "notified"',
   })
   status!: PeerResponseStatus;

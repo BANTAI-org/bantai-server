@@ -1,4 +1,5 @@
 import { IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
 
 /**
  * Body for POST /auth/activate and POST /auth/reset-password.
@@ -17,11 +18,19 @@ import { IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
  * characters and changing it would make login fail.
  */
 export class ActionTokenPasswordDto {
+  @ApiProperty({
+    example: 'a1b2c3d4e5f6...',
+    description: 'Action token from email link (64 hex chars)',
+  })
   @IsString()
   @IsNotEmpty()
   @MaxLength(128)
   token!: string;
 
+  @ApiProperty({
+    example: 'newSecurePass123',
+    description: 'New password (10-72 chars)',
+  })
   @IsString()
   @MinLength(10)
   @MaxLength(72)

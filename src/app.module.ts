@@ -18,6 +18,7 @@ import { GpsModule } from './modules/gps/gps.module';
 import { WaveDispatchModule } from './modules/wave-dispatch/wave-dispatch.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { validate } from './config/env.config';
+import { StorageModule } from './modules/storage/s3.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { validate } from './config/env.config';
     GpsModule,
     WaveDispatchModule,
     DashboardModule,
+    StorageModule,
   ],
   controllers: [AppController],
   providers: [AppService],
