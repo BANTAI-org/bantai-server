@@ -15,6 +15,13 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { UpdateLocationDto } from './dto/update-location.dto';
 import { RedisService } from './redis.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 
 const bodyPipe = new ValidationPipe({ whitelist: true, transform: true });
 
@@ -24,10 +31,17 @@ const bodyPipe = new ValidationPipe({ whitelist: true, transform: true });
  */
 @Controller('location')
 @UseGuards(JwtGuard, RolesGuard)
+@ApiTags('Location')
+@ApiBearerAuth('access-token')
 export class RedisController {
   constructor(private readonly redisService: RedisService) {}
 
   @Post('driver')
+  @ApiOperation({ summary: 'Update the authenticated driver location' })
+  @ApiBody({ type: UpdateLocationDto })
+  @ApiResponse({ status: 204, description: 'Driver location updated' })
+  @ApiResponse({ status: 400, description: 'Invalid location data' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.DRIVER)
   @HttpCode(HttpStatus.NO_CONTENT)
   async updateDriver(
@@ -43,6 +57,11 @@ export class RedisController {
   }
 
   @Post('responder')
+  @ApiOperation({ summary: 'Update the authenticated responder location' })
+  @ApiBody({ type: UpdateLocationDto })
+  @ApiResponse({ status: 204, description: 'Responder location updated' })
+  @ApiResponse({ status: 400, description: 'Invalid location data' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.RESPONDER)
   @HttpCode(HttpStatus.NO_CONTENT)
   async updateResponder(

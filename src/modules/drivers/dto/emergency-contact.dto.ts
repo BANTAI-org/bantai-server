@@ -1,5 +1,6 @@
 import { Transform } from 'class-transformer';
 import { IsNotEmpty, IsString, Matches, MaxLength } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
 
 const MOBILE_PATTERN = /^\+639\d{9}$/;
 
@@ -13,18 +14,30 @@ const trim = ({ value }: { value: unknown }): unknown =>
  * never drift between registration and a later edit.
  */
 export class EmergencyContactDto {
+  @ApiProperty({
+    description: 'Emergency contact full name',
+    example: 'Maria Santos',
+  })
   @Transform(trim)
   @IsString()
   @IsNotEmpty()
   @MaxLength(100)
   name!: string;
 
+  @ApiProperty({
+    description: 'Relationship to the account holder',
+    example: 'Spouse',
+  })
   @Transform(trim)
   @IsString()
   @IsNotEmpty()
   @MaxLength(50)
   relation!: string;
 
+  @ApiProperty({
+    description: 'Contact mobile number in Philippine E.164 format',
+    example: '+639171234567',
+  })
   @Matches(MOBILE_PATTERN, {
     message: 'contact number must be a valid PH mobile number',
   })

@@ -19,6 +19,7 @@ import {
   ApiBody,
   ApiCookieAuth,
   ApiBearerAuth,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -171,6 +172,7 @@ export class AuthController {
 
   @Get('verify-activation-token')
   @Header('Cache-Control', 'no-store')
+  @ApiQuery({ name: 'token', required: true, type: String })
   @ApiOperation({
     summary: 'Verify an account activation token (from email link)',
   })
@@ -190,6 +192,7 @@ export class AuthController {
 
   @Get('verify-reset-token')
   @Header('Cache-Control', 'no-store')
+  @ApiQuery({ name: 'token', required: true, type: String })
   @ApiOperation({ summary: 'Verify a password reset token (from email link)' })
   @ApiResponse({
     status: 200,

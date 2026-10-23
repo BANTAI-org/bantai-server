@@ -23,6 +23,7 @@ import { AuthProviderEnum } from '../../responders/enums/auth-provider.enum';
 import { ServiceProviderEnum } from '../../responders/enums/service-provider.enum';
 import { BloodTypeEnum } from '../../responders/enums/blood-type.enum';
 import { EmergencyContactDto } from './emergency-contact.dto';
+import { ApiProperty } from '@nestjs/swagger';
 
 const NAME_PATTERN = /^[\p{L}\s-]+$/u;
 const MOBILE_PATTERN = /^\+639\d{9}$/;
@@ -60,6 +61,7 @@ export class CreateDriverDto {
   // ---------------------------------------------------------------
   // Screen 1: Personal details
   // ---------------------------------------------------------------
+  @ApiProperty({ description: 'Driver first name', example: 'Juan' })
   @Transform(trim)
   @IsString()
   @IsNotEmpty()
@@ -69,6 +71,7 @@ export class CreateDriverDto {
   })
   f_name!: string;
 
+  @ApiProperty({ description: 'Driver last name', example: 'Dela Cruz' })
   @Transform(trim)
   @IsString()
   @IsNotEmpty()
@@ -78,6 +81,11 @@ export class CreateDriverDto {
   })
   l_name!: string;
 
+  @ApiProperty({
+    required: false,
+    description: 'Driver middle name',
+    example: 'Santos',
+  })
   @Transform(trimToUndefined)
   @IsOptional()
   @IsString()
@@ -90,12 +98,20 @@ export class CreateDriverDto {
   // 'YYYY-MM-DD'. `strict` rejects impossible dates such as 2001-02-30,
   // which a plain @IsDateString would let through to fail in Postgres.
   // That it is a PAST date is checked in DriverService.
+  @ApiProperty({
+    description: 'Date of birth in YYYY-MM-DD format',
+    example: '1990-05-20',
+  })
   @Matches(DATE_ONLY_PATTERN, { message: 'date_of_birth must be YYYY-MM-DD' })
   @IsISO8601({ strict: true })
   date_of_birth!: string;
 
   // Street + city are composed into one string client-side, matching
   // d_profile.address's single TEXT column.
+  @ApiProperty({
+    description: 'Residential address',
+    example: '123 Rizal Street, Quezon City',
+  })
   @Transform(trim)
   @IsString()
   @IsNotEmpty()
@@ -105,6 +121,10 @@ export class CreateDriverDto {
   // ---------------------------------------------------------------
   // Screen 2: Account & login
   // ---------------------------------------------------------------
+  @ApiProperty({
+    description: 'Verified Philippine mobile number in E.164 format',
+    example: '+639171234567',
+  })
   @Matches(MOBILE_PATTERN, {
     message: 'm_number must be a valid PH mobile number (+639XXXXXXXXX)',
   })
@@ -112,6 +132,10 @@ export class CreateDriverDto {
 
   // For local sign-ups this is the account email. For Google/Apple it is
   // ignored: DriverService stores the email from the verified token.
+  @ApiProperty({
+    description: 'Account email address',
+    example: 'juan.delacruz@example.com',
+  })
   @Transform(({ value }: { value: unknown }) =>
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )
@@ -125,12 +149,22 @@ export class CreateDriverDto {
    * Google/Apple), mirroring chck_auth_requirements so a malformed
    * combination gets a 400.
    */
+  @ApiProperty({
+    enum: AuthProviderEnum,
+    description: 'Authentication provider used for registration',
+    example: AuthProviderEnum.LOCAL,
+  })
   @IsEnum(AuthProviderEnum)
   auth_provider!: AuthProviderEnum;
 
   // bcrypt ignores everything past 72 bytes, so longer input is
   // rejected rather than silently half-checked at login. Not trimmed:
   // spaces are valid password characters.
+  @ApiProperty({
+    required: false,
+    description: 'Password required for local authentication',
+    example: 'StrongPass123!',
+  })
   @ValidateIf(
     (dto: CreateDriverDto) => dto.auth_provider === AuthProviderEnum.LOCAL,
   )
@@ -146,6 +180,11 @@ export class CreateDriverDto {
    * SocialIdentityVerifier; the stored email comes from the verified
    * token, not from the `email` field above.
    */
+  @ApiProperty({
+    required: false,
+    description: 'Fresh provider ID token required for social authentication',
+    example: 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...',
+  })
   @ValidateIf(
     (dto: CreateDriverDto) => dto.auth_provider !== AuthProviderEnum.LOCAL,
   )
@@ -157,6 +196,11 @@ export class CreateDriverDto {
   // ---------------------------------------------------------------
   // Screen 3: License & operator
   // ---------------------------------------------------------------
+  @ApiProperty({
+    enum: ServiceProviderEnum,
+    description: 'Driver service provider',
+    example: ServiceProviderEnum.INDEPENDENT,
+  })
   @IsEnum(ServiceProviderEnum)
   service_provider!: ServiceProviderEnum;
 
@@ -165,6 +209,12 @@ export class CreateDriverDto {
    * service_id_requires_provider. (For independent, DriverService
    * stores null even if a stale value arrives.)
    */
+  @ApiProperty({
+    required: false,
+    description:
+      'Service provider identifier, required unless provider is independent',
+    example: 'TODA-1024',
+  })
   @ValidateIf(
     (dto: CreateDriverDto) =>
       dto.service_provider !== ServiceProviderEnum.INDEPENDENT,
@@ -174,12 +224,20 @@ export class CreateDriverDto {
   @MaxLength(50)
   service_id?: string;
 
+  @ApiProperty({
+    description: 'Driver license number',
+    example: 'N01-23-456789',
+  })
   @Transform(trim)
   @IsString()
   @IsNotEmpty()
   @MaxLength(50)
   license_number!: string;
 
+  @ApiProperty({
+    description: 'Driver license expiry date in YYYY-MM-DD format',
+    example: '2028-08-31',
+  })
   @Matches(DATE_ONLY_PATTERN, {
     message: 'license_expires_at must be YYYY-MM-DD',
   })
@@ -187,6 +245,7 @@ export class CreateDriverDto {
   license_expires_at!: string;
 
   // Max 80 also keeps the value inside the SMALLINT column.
+  @ApiProperty({ description: 'Years of riding experience', example: 8 })
   @IsInt()
   @Min(0)
   @Max(80)
@@ -194,6 +253,11 @@ export class CreateDriverDto {
 
   // Genuinely optional ("Optional — TODA or fleet"), independent of
   // service_provider.
+  @ApiProperty({
+    required: false,
+    description: 'Fleet operator identifier, if applicable',
+    example: 'FLEET-204',
+  })
   @Transform(trimToUndefined)
   @IsOptional()
   @IsString()
@@ -203,6 +267,7 @@ export class CreateDriverDto {
   // ---------------------------------------------------------------
   // Screen 4: Vehicle & medical info
   // ---------------------------------------------------------------
+  @ApiProperty({ description: 'Vehicle plate number', example: 'ABC1234' })
   @Transform(({ value }: { value: unknown }) =>
     typeof value === 'string' ? value.trim().toUpperCase() : value,
   )
@@ -211,22 +276,36 @@ export class CreateDriverDto {
   @MaxLength(20)
   plate_number!: string;
 
+  @ApiProperty({
+    description: 'Vehicle make and model',
+    example: 'Honda Click 150i',
+  })
   @Transform(trim)
   @IsString()
   @IsNotEmpty()
   @MaxLength(100)
   vehicle_model!: string;
 
+  @ApiProperty({ description: 'Vehicle color', example: 'Matte black' })
   @Transform(trim)
   @IsString()
   @IsNotEmpty()
   @MaxLength(50)
   vehicle_color!: string;
 
+  @ApiProperty({
+    enum: BloodTypeEnum,
+    description: 'Driver blood type',
+    example: BloodTypeEnum.O_PLUS,
+  })
   @IsEnum(BloodTypeEnum)
   blood_type!: BloodTypeEnum;
 
   // Free text, required — "none" is itself a valid, expected answer.
+  @ApiProperty({
+    description: 'Known medical conditions; use "none" if there are none',
+    example: 'None',
+  })
   @Transform(trim)
   @IsString()
   @IsNotEmpty()
@@ -235,6 +314,13 @@ export class CreateDriverDto {
 
   // 1 to 3 contacts: the wizard requires one, the DB caps it at three
   // (emergency_contacts_max_three).
+  @ApiProperty({
+    type: () => [EmergencyContactDto],
+    description: 'One to three emergency contacts',
+    example: [
+      { name: 'Maria Santos', relation: 'Spouse', number: '+639171234567' },
+    ],
+  })
   @IsArray()
   @ArrayMinSize(1, { message: 'at least 1 emergency contact is required' })
   @ArrayMaxSize(3, { message: 'at most 3 emergency contacts are allowed' })
@@ -247,6 +333,10 @@ export class CreateDriverDto {
    * omission both fail, so a request can't succeed without having
    * affirmatively agreed.
    */
+  @ApiProperty({
+    description: 'Affirmative data-sharing consent',
+    example: true,
+  })
   @Equals(true, { message: 'data_sharing_consent must be explicitly true' })
   data_sharing_consent!: boolean;
 

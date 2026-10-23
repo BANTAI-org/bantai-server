@@ -4,6 +4,10 @@ import { type GeoPoint } from '../../../common/interfaces/geo-location.interface
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateCommandCenterDTO {
+  @ApiProperty({
+    description: 'Command center name',
+    example: 'Central District Command Center',
+  })
   @IsString()
   @Length(4, 256)
   @IsNotEmpty()
@@ -18,11 +22,34 @@ export class CreateCommandCenterDTO {
   @IsEnum(CCEnum)
   type!: CCEnum;
 
+  @ApiProperty({
+    description: 'Command center branch name',
+    example: 'Central District',
+  })
   @IsString()
-  @IsNotEmpty()
   @Length(4, 256)
+  @IsNotEmpty()
   branch!: string;
 
+  @ApiProperty({
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      latitude: {
+        type: 'number',
+        description: 'Latitude in decimal degrees',
+        example: 14.676,
+      },
+      longitude: {
+        type: 'number',
+        description: 'Longitude in decimal degrees',
+        example: 121.0437,
+      },
+    },
+    required: ['latitude', 'longitude'],
+    description: 'Command center geographic coordinates',
+    example: { latitude: 14.676, longitude: 121.0437 },
+  })
   @IsNotEmpty()
   location!: GeoPoint;
 }

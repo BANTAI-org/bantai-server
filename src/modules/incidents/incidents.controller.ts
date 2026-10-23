@@ -32,6 +32,16 @@ import { VerifyIncidentDto } from './dto/verify-incident.dto';
 import { IncidentService } from './incidents.service';
 import { IncidentEntity } from './interfaces/incident-entity.interface';
 import { IncidentLogEntity } from './interfaces/incident-log-entity.interface';
+import { IncidentStatus } from './enums/incident-status.enum';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 
 const ANY_USER = [Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER];
 
@@ -43,6 +53,8 @@ const ANY_USER = [Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER];
  */
 @Controller('incidents')
 @UseGuards(JwtGuard, RolesGuard)
+@ApiTags('Incidents')
+@ApiBearerAuth('access-token')
 export class IncidentController {
   constructor(private readonly incidentService: IncidentService) {}
 
@@ -52,10 +64,15 @@ export class IncidentController {
 
   /**
    * A rider raises an SOS (MANUAL_SOS), or a command center logs a walk-in
-   * report (CENTER_MANUAL). EDGE_AI incidents come from the AI pipeline, not a
-   * user account, and need their own intake route.
+   * report (CENTER_MANUAL). EDGE_AI and CRASH_IMU incidents come from the
+   * hardware pipeline, but can be relayed via the rider's authenticated app.
    */
   @Post()
+  @ApiOperation({ summary: 'Create an incident' })
+  @ApiBody({ type: CreateIncidentDto })
+  @ApiResponse({ status: 201, description: 'Incident created' })
+  @ApiResponse({ status: 400, description: 'Invalid incident data' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.DRIVER, Role.ADMIN, Role.SUPER)
   async create(
     @Body() dto: CreateIncidentDto,
@@ -66,8 +83,14 @@ export class IncidentController {
 
     let resolvedDriverId: string | null = null;
     if (role === Role.DRIVER) {
-      if (source !== 'MANUAL_SOS') {
-        throw new ForbiddenException('Riders can only raise SOS incidents');
+      // Allow the driver's app to relay telemetry from the Pi (CRASH_IMU)
+      // or the KVM/Edge pipeline (EDGE_AI).
+      const allowedSources = ['MANUAL_SOS', 'CRASH_IMU', 'EDGE_AI'];
+
+      if (!allowedSources.includes(source)) {
+        throw new ForbiddenException(
+          'Riders can only raise SOS, IMU crash, or Edge AI incidents',
+        );
       }
       resolvedDriverId = userId;
     } else if (source !== 'CENTER_MANUAL') {
@@ -86,6 +109,18 @@ export class IncidentController {
   // ---------------------------------------------------------------------
 
   @Get()
+  @ApiOperation({ summary: 'List incidents by status' })
+  @ApiQuery({
+    name: 'statuses',
+    required: true,
+    type: String,
+    isArray: true,
+    enum: IncidentStatus,
+  })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'cursor', required: false, type: String })
+  @ApiResponse({ status: 200, description: 'Incident page returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.SUPER)
   async listByStatus(
     @Query() query: FindIncidentsByStatusQueryDto,
@@ -96,7 +131,11 @@ export class IncidentController {
     );
     return CursorPageResponseDto.from(page, (incident) => incident);
   }
+
   @Get('all')
+  @ApiOperation({ summary: 'List open incidents for the authenticated driver' })
+  @ApiResponse({ status: 200, description: 'Open incidents returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.DRIVER)
   async getOpenIncidentsForDriver(
     @CurrentUser('sub') driverId: string,
@@ -109,6 +148,13 @@ export class IncidentController {
    * they ask for; a super has to name one.
    */
   @Get('logs')
+  @ApiOperation({ summary: 'List incident logs for a command center' })
+  @ApiQuery({ name: 'command_center_id', required: false, type: String })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'cursor', required: false, type: String })
+  @ApiResponse({ status: 200, description: 'Incident log page returned' })
+  @ApiResponse({ status: 400, description: 'Missing command center ID' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.ADMIN, Role.SUPER)
   async logs(
     @Query() query: FindIncidentLogsQueryDto,
@@ -143,6 +189,11 @@ export class IncidentController {
    * escalated-to center, are not covered yet (needs a repository lookup).
    */
   @Get(':incidentId')
+  @ApiOperation({ summary: 'Get an incident by ID' })
+  @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
+  @ApiResponse({ status: 200, description: 'Incident returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
   @Roles(...ANY_USER)
   async getOne(
     @Param() params: IncidentIdParamDto,
@@ -163,6 +214,11 @@ export class IncidentController {
   // ---------------------------------------------------------------------
 
   @Post(':incidentId/claim')
+  @ApiOperation({ summary: 'Claim an incident' })
+  @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
+  @ApiResponse({ status: 204, description: 'Incident claimed' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER)
   async claim(
@@ -173,6 +229,11 @@ export class IncidentController {
   }
 
   @Post(':incidentId/en-route')
+  @ApiOperation({ summary: 'Mark the responder as en route' })
+  @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
+  @ApiResponse({ status: 204, description: 'Responder marked en route' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER)
   async enRoute(
@@ -184,6 +245,13 @@ export class IncidentController {
 
   /** For 'manual' arrival the confirming user is the caller; for 'gps' nobody. */
   @Post(':incidentId/arrived')
+  @ApiOperation({ summary: 'Record responder arrival at an incident' })
+  @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
+  @ApiBody({ type: MarkArrivedDto })
+  @ApiResponse({ status: 204, description: 'Arrival recorded' })
+  @ApiResponse({ status: 400, description: 'Invalid arrival method' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER)
   async arrived(
@@ -201,6 +269,11 @@ export class IncidentController {
   }
 
   @Post(':incidentId/stand-down')
+  @ApiOperation({ summary: 'Stand down from an incident' })
+  @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
+  @ApiResponse({ status: 204, description: 'Responder stood down' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER)
   async standDown(
@@ -216,6 +289,13 @@ export class IncidentController {
 
   /** A nearby rider answers an alert they were sent. */
   @Post(':incidentId/peer-response')
+  @ApiOperation({ summary: 'Submit a peer response to an incident alert' })
+  @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
+  @ApiBody({ type: RecordPeerResponseDto })
+  @ApiResponse({ status: 204, description: 'Peer response recorded' })
+  @ApiResponse({ status: 400, description: 'Invalid peer response status' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.DRIVER)
   async peerResponse(
@@ -235,6 +315,11 @@ export class IncidentController {
   // ---------------------------------------------------------------------
 
   @Post(':incidentId/request-verification')
+  @ApiOperation({ summary: 'Request incident verification' })
+  @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
+  @ApiResponse({ status: 204, description: 'Verification requested' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER)
   async requestVerification(
@@ -245,6 +330,13 @@ export class IncidentController {
   }
 
   @Post(':incidentId/verify')
+  @ApiOperation({ summary: 'Verify an incident' })
+  @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
+  @ApiBody({ type: VerifyIncidentDto })
+  @ApiResponse({ status: 204, description: 'Incident verified' })
+  @ApiResponse({ status: 400, description: 'Invalid verification data' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
   async verify(
@@ -260,6 +352,13 @@ export class IncidentController {
   }
 
   @Post(':incidentId/resolve')
+  @ApiOperation({ summary: 'Resolve an incident' })
+  @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
+  @ApiBody({ type: ResolveIncidentDto })
+  @ApiResponse({ status: 204, description: 'Incident resolved' })
+  @ApiResponse({ status: 400, description: 'Invalid resolution outcome' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
   async resolve(
@@ -280,6 +379,13 @@ export class IncidentController {
 
   /** The claimant, an admin or a super. */
   @Patch(':incidentId/threat-level')
+  @ApiOperation({ summary: 'Update an incident threat level' })
+  @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
+  @ApiBody({ type: UpdateThreatLevelDto })
+  @ApiResponse({ status: 204, description: 'Threat level updated' })
+  @ApiResponse({ status: 400, description: 'Invalid threat level' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
   async threatLevel(
@@ -298,6 +404,13 @@ export class IncidentController {
 
   /** The claimant, an admin or a super (the repository enforces which). */
   @Patch(':incidentId/severity')
+  @ApiOperation({ summary: 'Update an incident severity' })
+  @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
+  @ApiBody({ type: UpdateSeverityDto })
+  @ApiResponse({ status: 204, description: 'Incident severity updated' })
+  @ApiResponse({ status: 400, description: 'Invalid severity' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
   async severity(
@@ -314,6 +427,13 @@ export class IncidentController {
 
   /** The claimant, an admin or a super. Returns the escalation id. */
   @Post(':incidentId/escalate')
+  @ApiOperation({ summary: 'Escalate an incident to another command center' })
+  @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
+  @ApiBody({ type: EscalateIncidentDto })
+  @ApiResponse({ status: 201, description: 'Incident escalated' })
+  @ApiResponse({ status: 400, description: 'Invalid escalation data' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
   @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
   async escalate(
     @Param() params: IncidentIdParamDto,
@@ -334,6 +454,11 @@ export class IncidentController {
 
   /** The rider cancels their own SOS; an admin or a super can cancel any. */
   @Post(':incidentId/cancel')
+  @ApiOperation({ summary: 'Cancel an incident' })
+  @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
+  @ApiResponse({ status: 204, description: 'Incident cancelled' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.DRIVER, Role.ADMIN, Role.SUPER)
   async cancel(

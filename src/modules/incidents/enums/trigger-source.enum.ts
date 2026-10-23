@@ -6,4 +6,5 @@ export enum TriggerSource {
   MANUAL_SOS = 'MANUAL_SOS',
   /** Walk-in / phone report entered by a command center (driver_id may be NULL). */
   CENTER_MANUAL = 'CENTER_MANUAL',
+  CRASH_IMU = 'CRASH_IMU',
 }

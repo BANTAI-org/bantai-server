@@ -1,6 +1,12 @@
 import { IsOptional, IsString, Matches } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
 
 export class SendOtpDto {
+  @ApiProperty({
+    required: false,
+    description: 'Philippine mobile number in E.164 format',
+    example: '+639171234567',
+  })
   @IsOptional()
   @IsString()
   @Matches(/^\+639\d{9}$/, {

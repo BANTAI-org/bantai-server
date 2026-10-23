@@ -4,10 +4,35 @@ import { CreateCommandCenterData } from './types/create-command-center-data.type
 import { UpdateCommandCenterData } from './types/update-command-center-data.types';
 import { CommandCenterEntity } from './interfaces/command-center.interface';
 import { ResponderTableRow } from './interfaces/responder-tb.interface';
+import { ActorOption } from './interfaces/action-option.interface';
 
 import { Role } from '../../common/enums/role-enum';
 import { AccountStatusEnum } from '../../modules/auth/enums/account-status.enum';
 import { AuditLogsService } from '../../modules/audit-logs/audit-logs.service';
+import { AgencyTypeEnum } from '../responders/enums/agency-type.enum';
+import { AvailabilityStatusEnum } from '../responders/enums/availability-status.enum';
+
+/**
+ * Represents the normalized, server-validated structure of the query parameters
+ * passed to `searchResponders`. This decouples the raw HTTP DTO (which contains
+ * strings) from the strictly-typed database inputs.
+ */
+export interface NormalizedResponderFilter {
+  status?: AccountStatusEnum[];
+  availability?: AvailabilityStatusEnum[];
+  agency?: AgencyTypeEnum[];
+  search?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  updatedFrom?: string;
+  updatedTo?: string;
+  lastActiveFrom?: string;
+  lastActiveTo?: string;
+  onShift?: boolean;
+  includeSoftDeleted: boolean;
+  limit: number;
+  cursor?: string;
+}
 
 @Injectable()
 export class CommandCenterRepository {
@@ -28,6 +53,12 @@ export class CommandCenterRepository {
     created_at
   `;
 
+  /**
+   * Inserts a new command center into the database.
+   *
+   * @param data - The core attributes of the command center (name, branch, type, location).
+   * @returns The newly created `CommandCenterEntity`.
+   */
   async createBranch(
     data: CreateCommandCenterData,
   ): Promise<CommandCenterEntity> {
@@ -50,6 +81,11 @@ export class CommandCenterRepository {
     return rows[0];
   }
 
+  /**
+   * Retrieves all command centers ordered by creation date (newest first).
+   *
+   * @returns An array of `CommandCenterEntity`.
+   */
   async viewAll(): Promise<CommandCenterEntity[]> {
     const sql = `
       SELECT ${this.selectFields}
@@ -61,6 +97,12 @@ export class CommandCenterRepository {
     return rows;
   }
 
+  /**
+   * Finds a single command center by its unique UUID.
+   *
+   * @param id - The UUID of the command center.
+   * @returns The `CommandCenterEntity` or `null` if not found.
+   */
   async findById(id: string): Promise<CommandCenterEntity | null> {
     const sql = `
       SELECT ${this.selectFields}
@@ -72,6 +114,12 @@ export class CommandCenterRepository {
     return rows[0] || null;
   }
 
+  /**
+   * Performs a case-insensitive partial match search on the command center name.
+   *
+   * @param name - The string to search for.
+   * @returns An array of matching `CommandCenterEntity` objects.
+   */
   async findByName(name: string): Promise<CommandCenterEntity[]> {
     const sql = `
       SELECT ${this.selectFields}
@@ -83,6 +131,12 @@ export class CommandCenterRepository {
     return rows;
   }
 
+  /**
+   * Performs a case-insensitive partial match search on the branch name.
+   *
+   * @param branch - The string to search for.
+   * @returns An array of matching `CommandCenterEntity` objects.
+   */
   async findByBranch(branch: string): Promise<CommandCenterEntity[]> {
     const sql = `
       SELECT ${this.selectFields}
@@ -94,6 +148,14 @@ export class CommandCenterRepository {
     return rows;
   }
 
+  /**
+   * Updates fields of an existing command center. The SQL dynamically builds
+   * the `SET` clause based on which properties are present in the payload.
+   *
+   * @param id - The UUID of the command center to update.
+   * @param data - The partial payload of fields to update.
+   * @returns The updated `CommandCenterEntity`, or `null` if it didn't exist.
+   */
   async updateBranch(
     id: string,
     data: UpdateCommandCenterData,
@@ -140,12 +202,27 @@ export class CommandCenterRepository {
     return rows[0] || null;
   }
 
+  /**
+   * Hard-deletes a command center from the database.
+   *
+   * @param id - The UUID of the command center.
+   * @returns `true` if deleted, `false` if no rows were affected.
+   */
   async deleteBranch(id: string): Promise<boolean> {
     const sql = `DELETE FROM command_center WHERE id = $1;`;
     const result = await this.db.query(sql, [id]);
     return (result.rowCount ?? 0) > 0;
   }
 
+  /**
+   * Legacy: Fetches a paginated list of responders in a specific command center.
+   * Excludes soft-deleted accounts. Relies on name-based cursor pagination.
+   *
+   * @param id - Command Center UUID.
+   * @param limit - Number of records to return (default 20).
+   * @param cursor - Base64 encoded tuple string `[l_name, f_name]`.
+   * @returns Paginated `ResponderTableRow` array and a `nextCursor`.
+   */
   async viewAllRespondersBranch(
     id: string,
     limit: number = 20,
@@ -181,7 +258,7 @@ export class CommandCenterRepository {
     }
 
     query += ` ORDER BY u.l_name, u.f_name LIMIT $${values.length + 1}`;
-    values.push(limit + 1); // Get one extra to check if there are more
+    values.push(limit + 1);
 
     const { rows } = await this.db.query<ResponderTableRow>(query, values);
 
@@ -199,6 +276,17 @@ export class CommandCenterRepository {
     return { data, nextCursor };
   }
 
+  /**
+   * Legacy: Fetches a paginated list of responders filtered by account status.
+   * NOTE: Unlike `viewAllRespondersBranch`, this DOES include soft-deleted rows
+   * (necessary to view 'deactivated' accounts where `deleted_at` is also set).
+   *
+   * @param id - Command Center UUID.
+   * @param status - The specific account status to filter by.
+   * @param limit - Number of records to return (default 20).
+   * @param cursor - Base64 encoded tuple string `[l_name, f_name]`.
+   * @returns Paginated `ResponderTableRow` array and a `nextCursor`.
+   */
   async viewAllRespondersBasedOnStatusBranch(
     id: string,
     status: AccountStatusEnum,
@@ -239,7 +327,7 @@ export class CommandCenterRepository {
     }
 
     query += ` ORDER BY u.l_name, u.f_name LIMIT $${values.length + 1}`;
-    values.push(limit + 1); // Get one extra to check if there are more
+    values.push(limit + 1);
 
     const { rows } = await this.db.query<ResponderTableRow>(query, values);
 
@@ -258,11 +346,170 @@ export class CommandCenterRepository {
   }
 
   /**
-   * Deactivates a responder by setting account_status to 'deactivated' and
-   * deleted_at to now(). The trg_revoke_sessions_on_soft_delete trigger revokes
-   * the responder's sessions and sets availability to off_duty in the same
-   * transaction.
-   * Returns false if no live responder with that id exists in that branch.
+   * Advanced filtering engine for responders in a specific command center.
+   * Dynamically constructs a SQL query based on the provided filters (statuses,
+   * availability, agencies, date ranges, shift state, and text search).
+   *
+   * @param centerId - Command Center UUID.
+   * @param filter - The normalized object containing all active filters.
+   * @returns Paginated `ResponderTableRow` array and a `nextCursor`.
+   */
+  async searchResponders(
+    centerId: string,
+    filter: NormalizedResponderFilter,
+  ): Promise<{ data: ResponderTableRow[]; nextCursor: string | null }> {
+    const params: unknown[] = [centerId, Role.RESPONDER];
+    let paramIdx = 3;
+
+    const clauses: string[] = [`u.command_center_id = $1`, `u.role = $2`];
+
+    if (!filter.includeSoftDeleted) {
+      clauses.push(`u.deleted_at IS NULL`);
+    }
+
+    if (filter.status && filter.status.length > 0) {
+      clauses.push(
+        `u.account_status = ANY($${paramIdx++}::account_status_enum[])`,
+      );
+      params.push(filter.status);
+    }
+
+    if (filter.availability && filter.availability.length > 0) {
+      clauses.push(
+        `p.availability = ANY($${paramIdx++}::availability_status[])`,
+      );
+      params.push(filter.availability);
+    }
+
+    if (filter.agency && filter.agency.length > 0) {
+      clauses.push(`p.agency = ANY($${paramIdx++}::agency_type[])`);
+      params.push(filter.agency);
+    }
+
+    const search = filter.search?.trim();
+    if (search) {
+      const escaped = search.replace(/[\\%_]/g, '\\$&');
+      clauses.push(
+        `(u.f_name ILIKE $${paramIdx}
+          OR u.l_name ILIKE $${paramIdx}
+          OR u.m_name ILIKE $${paramIdx}
+          OR u.email   ILIKE $${paramIdx})`,
+      );
+      params.push(`%${escaped}%`);
+      paramIdx++;
+    }
+
+    if (filter.createdFrom) {
+      clauses.push(`u.created_at >= $${paramIdx++}`);
+      params.push(filter.createdFrom);
+    }
+    if (filter.createdTo) {
+      clauses.push(`u.created_at <= $${paramIdx++}`);
+      params.push(filter.createdTo);
+    }
+    if (filter.updatedFrom) {
+      clauses.push(`u.updated_at >= $${paramIdx++}`);
+      params.push(filter.updatedFrom);
+    }
+    if (filter.updatedTo) {
+      clauses.push(`u.updated_at <= $${paramIdx++}`);
+      params.push(filter.updatedTo);
+    }
+    if (filter.lastActiveFrom) {
+      clauses.push(`p.last_active_at >= $${paramIdx++}`);
+      params.push(filter.lastActiveFrom);
+    }
+    if (filter.lastActiveTo) {
+      clauses.push(`p.last_active_at <= $${paramIdx++}`);
+      params.push(filter.lastActiveTo);
+    }
+
+    if (filter.onShift === true) {
+      clauses.push(
+        `p.availability = 'on_duty' AND p.shift_ends_at IS NOT NULL AND p.shift_ends_at > now()`,
+      );
+    } else if (filter.onShift === false) {
+      clauses.push(
+        `NOT (p.availability = 'on_duty' AND p.shift_ends_at IS NOT NULL AND p.shift_ends_at > now())`,
+      );
+    }
+
+    if (filter.cursor) {
+      const [lastLName, lastFName] = JSON.parse(
+        Buffer.from(filter.cursor, 'base64').toString(),
+      ) as [string, string];
+      clauses.push(`(u.l_name, u.f_name) > ($${paramIdx++}, $${paramIdx++})`);
+      params.push(lastLName, lastFName);
+    }
+
+    params.push(filter.limit + 1);
+    const limitIdx = paramIdx;
+
+    const sql = `
+      SELECT
+        u.id,
+        u.f_name,
+        u.l_name,
+        u.m_name,
+        u.role,
+        u.account_status,
+        u.email,
+        p.rank,
+        p.agency,
+        p.availability
+      FROM user_account u
+      JOIN r_profile p ON p.user_id = u.id
+      WHERE ${clauses.join('\n        AND ')}
+      ORDER BY u.l_name, u.f_name
+      LIMIT $${limitIdx}
+    `;
+
+    const { rows } = await this.db.query<ResponderTableRow>(sql, params);
+
+    const hasMore = rows.length > filter.limit;
+    const data = hasMore ? rows.slice(0, -1) : rows;
+    let nextCursor: string | null = null;
+    if (hasMore && data.length > 0) {
+      const last = data[data.length - 1];
+      nextCursor = Buffer.from(
+        JSON.stringify([last.l_name, last.f_name]),
+      ).toString('base64');
+    }
+    return { data, nextCursor };
+  }
+
+  /**
+   * Retrieves a minimal list of users (Admins and Responders) within a specific
+   * command center. Used to populate dropdown menus, such as the "Filter Actor"
+   * selector in the audit logs UI.
+   *
+   * @param centerId - The UUID of the command center.
+   * @returns An array of `ActorOption` objects (id and full name).
+   */
+  async findActorsInBranch(centerId: string): Promise<ActorOption[]> {
+    const sql = `
+      SELECT 
+        id, 
+        f_name || ' ' || l_name AS name
+      FROM user_account
+      WHERE command_center_id = $1
+        AND role IN ('admin', 'responder')
+        AND deleted_at IS NULL
+      ORDER BY l_name, f_name;
+    `;
+
+    const { rows } = await this.db.query<ActorOption>(sql, [centerId]);
+    return rows;
+  }
+
+  /**
+   * Deactivates a responder by setting `account_status` to 'deactivated' and
+   * `deleted_at` to now(). The `trg_revoke_sessions_on_soft_delete` trigger
+   * revokes sessions and sets availability to off_duty in the same transaction.
+   *
+   * @param id - Responder UUID.
+   * @param commandCenterId - Command Center UUID (for scoping).
+   * @returns `true` if a live responder was found and updated, `false` otherwise.
    */
   async deactivateResponder(
     id: string,
@@ -282,19 +529,26 @@ export class CommandCenterRepository {
     return rows.length > 0;
   }
 
+  /**
+   * Updates the email address of a responder. This is strictly limited to
+   * accounts in the 'pending_activation' state so they can receive their
+   * activation link at the correct address.
+   *
+   * @param id - Responder UUID.
+   * @param email - The new email address.
+   * @returns The previous email address (used for audit logging).
+   * @throws Error if the account is not pending activation or validation fails.
+   */
   async updateEmail(id: string, email: string): Promise<string> {
-    // Validate inputs
     if (!id || !email) {
       throw new Error('ID and email are required');
     }
 
-    // Basic email format validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       throw new Error('Invalid email format');
     }
 
-    // Get current email for audit logging (old value)
     const sqlGetCurrent =
       'SELECT email FROM user_account WHERE id = $1 AND account_status = $2';
     const currentEmailResult = await this.db.query<{ email: string }>(
@@ -310,7 +564,6 @@ export class CommandCenterRepository {
 
     const oldEmail = currentEmailResult.rows[0].email;
 
-    // Update the email
     const sqlUpdate =
       'UPDATE user_account SET email = $1 WHERE id = $2 AND account_status = $3';
     const updateResult = await this.db.query<{ rowCount: number }>(sqlUpdate, [
@@ -323,11 +576,17 @@ export class CommandCenterRepository {
       throw new Error(`Failed to update email for responder ID ${id}`);
     }
 
-    // Return old email for audit logging (as requested)
     return oldEmail;
   }
 
-  //Checks if user exists, and if the operation is happening on same branch
+  /**
+   * Checks if a user exists and if the operation is happening within the same
+   * branch. Used as a guard before performing mutative actions.
+   *
+   * @param id - Responder UUID.
+   * @param command_center_id - Command Center UUID.
+   * @returns The Responder UUID if found, otherwise `null`.
+   */
   async findResponderInBranch(
     id: string,
     command_center_id: string,
@@ -343,10 +602,13 @@ export class CommandCenterRepository {
   }
 
   /**
-   * Activates a deactivated responder by setting deleted_at to NULL and
-   * account_status to 'active'. The user_identity trigger restores
-   * their identities too.
-   * Returns false if no deactivated responder with that id exists in that branch.
+   * Activates a deactivated responder by clearing `deleted_at` and setting
+   * `account_status` back to 'active'. The `user_identity` trigger restores
+   * their identities in the background.
+   *
+   * @param id - Responder UUID.
+   * @param commandCenterId - Command Center UUID.
+   * @returns `true` if found and restored, `false` otherwise.
    */
   async activateResponder(
     id: string,
@@ -372,6 +634,12 @@ export class CommandCenterRepository {
    * the random token and passes only its hash. Re-issuing replaces any
    * unused token (the schema allows one live token per user and purpose).
    * Sessions are revoked in the same transaction.
+   *
+   * @param id - Responder UUID.
+   * @param commandCenterId - Command Center UUID.
+   * @param tokenHash - SHA-256 hash of the reset token.
+   * @param expiresAt - Expiration timestamp for the token.
+   * @returns An object containing the responder's email, or `null` if not found.
    */
   async setForForcedPasswordReset(
     id: string,
@@ -412,7 +680,13 @@ export class CommandCenterRepository {
     });
   }
 
-  /** Signs the responder out everywhere. Returns false if not found in that branch. */
+  /**
+   * Signs the responder out everywhere by revoking all active sessions.
+   *
+   * @param id - Responder UUID.
+   * @param commandCenterId - Command Center UUID.
+   * @returns `true` if the responder exists and sessions were processed, `false` otherwise.
+   */
   async setForSessionRevoke(
     id: string,
     commandCenterId: string,
@@ -436,6 +710,14 @@ export class CommandCenterRepository {
     return (rows[0]?.found ?? 0) > 0;
   }
 
+  /**
+   * Retrieves the role and branch scope of an actor. This is used by the
+   * service layer to enforce Role-Based Access Control (RBAC) for branch-level
+   * operations (e.g., ensuring an Admin can only manage their own center).
+   *
+   * @param userId - The UUID of the user performing the action.
+   * @returns The role and command_center_id, or `null` if the user is deleted/not found.
+   */
   async findActorScope(
     userId: string,
   ): Promise<{ role: Role; command_center_id: string | null } | null> {

@@ -19,6 +19,7 @@ import { WaveDispatchModule } from './modules/wave-dispatch/wave-dispatch.module
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { validate } from './config/env.config';
 import { StorageModule } from './modules/storage/s3.module';
+import { CommunicationsModule } from './modules/communications/comms.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { StorageModule } from './modules/storage/s3.module';
     WaveDispatchModule,
     DashboardModule,
     StorageModule,
+    CommunicationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

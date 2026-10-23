@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiTags,
+  ApiBody,
   ApiBearerAuth,
   ApiOperation,
   ApiResponse,
@@ -42,10 +43,13 @@ export class StorageController {
   @Post('profile-image/upload-url')
   @Roles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
   @ApiOperation({ summary: 'Get a presigned URL to upload a profile image' })
+  @ApiBody({ type: RequestUploadUrlDto })
   @ApiResponse({
     status: 201,
     description: 'Returns the upload URL and object key',
   })
+  @ApiResponse({ status: 400, description: 'Invalid image upload request' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getProfileImageUploadUrl(
     @Body() dto: RequestUploadUrlDto,
     @CurrentUser('sub') userId: string,
@@ -69,6 +73,7 @@ export class StorageController {
   @ApiOperation({
     summary: 'Step 1: Initiate a multipart upload for large videos',
   })
+  @ApiBody({ type: InitiateMultipartDto })
   @ApiQuery({
     name: 'incidentId',
     required: false,
@@ -78,6 +83,8 @@ export class StorageController {
     status: 201,
     description: 'Returns the uploadId and objectKey',
   })
+  @ApiResponse({ status: 400, description: 'Invalid upload request' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async initiateEvidenceUpload(
     @Body() dto: InitiateMultipartDto,
     @CurrentUser('sub') userId: string,
@@ -100,10 +107,13 @@ export class StorageController {
   @Post('evidence/multipart/sign-parts')
   @Roles(Role.DRIVER, Role.ADMIN, Role.SUPER)
   @ApiOperation({ summary: 'Step 2: Get presigned URLs for the video chunks' })
+  @ApiBody({ type: SignPartsDto })
   @ApiResponse({
     status: 201,
     description: 'Returns an array of part numbers and their presigned URLs',
   })
+  @ApiResponse({ status: 400, description: 'Invalid multipart upload request' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async signEvidenceParts(
     @Body() dto: SignPartsDto,
   ): Promise<{ urls: { partNumber: number; url: string }[] }> {
@@ -120,10 +130,13 @@ export class StorageController {
   @Post('evidence/multipart/complete')
   @Roles(Role.DRIVER, Role.ADMIN, Role.SUPER)
   @ApiOperation({ summary: 'Step 3: Complete the upload by sending the ETags' })
+  @ApiBody({ type: CompleteMultipartDto })
   @ApiResponse({
     status: 201,
     description: 'Successfully merged all chunks into one video file',
   })
+  @ApiResponse({ status: 400, description: 'Invalid multipart upload request' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async completeEvidenceUpload(
     @Body() dto: CompleteMultipartDto,
   ): Promise<{ objectKey: string; success: boolean }> {
@@ -143,6 +156,8 @@ export class StorageController {
   @ApiQuery({ name: 'key', required: true, description: 'The R2 object key' })
   @ApiQuery({ name: 'bucket', required: true, enum: ['profile', 'evidence'] })
   @ApiResponse({ status: 200, description: 'Returns the secure download URL' })
+  @ApiResponse({ status: 400, description: 'Invalid bucket or object key' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getDownloadUrl(
     @Query('key') key: string,
     @Query('bucket') bucketType: 'profile' | 'evidence',

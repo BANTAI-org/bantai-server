@@ -13,13 +13,18 @@ import { AccountStatusEnum } from '../../modules/auth/enums/account-status.enum'
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { AuditAction } from '../audit-logs/enums/audit-action.enum';
 import { EmailService } from '../email/email.service';
-import { CommandCenterRepository } from './command-center.repository';
+import {
+  CommandCenterRepository,
+  NormalizedResponderFilter,
+} from './command-center.repository';
 import { CommandCenterEntity } from './interfaces/command-center.interface';
 import { CreateCommandCenterDTO } from './dto/create-command-center.dto';
 import { UpdateCommandCenterDTO } from './dto/update-command-center.dto';
 import { UpdateCommandCenterData } from './types/update-command-center-data.types';
 import { CreateCommandCenterData } from './types/create-command-center-data.types';
 import { ResponderTableRow } from './interfaces/responder-tb.interface';
+import { ActorOption } from './interfaces/action-option.interface';
+import { ResponderFilterDTO } from './dto/responder-filter.dto';
 import { AuthService } from '../auth/auth.service';
 
 // Matches the "expires in 1 hour" copy in EmailService.sendPasswordResetEmail.
@@ -33,6 +38,32 @@ function isUniqueViolation(error: unknown): boolean {
     'code' in error &&
     error.code === '23505'
   );
+}
+
+/** Anchors date-only bounds to UTC start/end of day. */
+function normalizeBound(
+  value: string | undefined,
+  bound: 'from' | 'to',
+): string | undefined {
+  if (!value) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return bound === 'from'
+      ? `${value}T00:00:00.000Z`
+      : `${value}T23:59:59.999Z`;
+  }
+  return value;
+}
+
+/** Fails fast if a caller sends an inverted range (e.g. From > To). */
+function assertOrderedRange(
+  from: string | undefined,
+  to: string | undefined,
+  label: string,
+): void {
+  if (!from || !to) return;
+  if (Date.parse(from) > Date.parse(to)) {
+    throw new BadRequestException(`${label}From must be <= ${label}To`);
+  }
 }
 
 @Injectable()
@@ -79,6 +110,12 @@ export class CommandCenterService {
     return value.replace(/\s+/g, ' ').trim().toLowerCase();
   }
 
+  /**
+   * Creates a new command center.
+   *
+   * @param dto - Data Transfer Object containing the center's attributes.
+   * @returns The newly created `CommandCenterEntity`.
+   */
   async create(dto: CreateCommandCenterDTO): Promise<CommandCenterEntity> {
     const createData: CreateCommandCenterData = {
       ...dto,
@@ -90,20 +127,19 @@ export class CommandCenterService {
       const createdCenter =
         await this.commandCenterRepository.createBranch(createData);
 
-      // Create audit log for command center creation
       await this.createAuditLog(
         AuditAction.CREATE_CC,
-        null, // actorId - system/super admin action
-        createdCenter.id, // commandCenterId - the newly created CC
+        null,
+        createdCenter.id,
         'command_center',
         createdCenter.id,
-        null, // oldPayload
+        null,
         {
           name: createdCenter.name,
           branch: createdCenter.branch,
           type: createdCenter.type,
           location: createdCenter.location,
-        }, // newPayload
+        },
       );
 
       return createdCenter;
@@ -118,6 +154,13 @@ export class CommandCenterService {
     }
   }
 
+  /**
+   * Updates an existing command center's details.
+   *
+   * @param id - The UUID of the command center to update.
+   * @param dto - The partial payload of fields to update.
+   * @returns The updated `CommandCenterEntity`.
+   */
   async update(
     id: string,
     dto: UpdateCommandCenterDTO,
@@ -128,7 +171,6 @@ export class CommandCenterService {
       ...(dto.branch && { branch: this.sanitizeString(dto.branch) }),
     };
 
-    // Get original entity for audit log
     const originalCenter = await this.commandCenterRepository.findById(id);
 
     let updatedCenter: CommandCenterEntity | null = null;
@@ -153,11 +195,10 @@ export class CommandCenterService {
       throw new NotFoundException(`Command center with ID '${id}' not found`);
     }
 
-    // Create audit log for command center update
     await this.createAuditLog(
-      AuditAction.UPDATE_USER, // Note: There's no specific UPDATE_CC action, using UPDATE_USER as closest match
-      null, // actorId - system/super admin action
-      id, // commandCenterId
+      AuditAction.UPDATE_USER,
+      null,
+      id,
       'command_center',
       id,
       originalCenter
@@ -167,20 +208,24 @@ export class CommandCenterService {
             type: originalCenter.type,
             location: originalCenter.location,
           }
-        : null, // oldPayload
+        : null,
       {
         name: updatedCenter.name,
         branch: updatedCenter.branch,
         type: updatedCenter.type,
         location: updatedCenter.location,
-      }, // newPayload
+      },
     );
 
     return updatedCenter;
   }
 
+  /**
+   * Hard-deletes a command center.
+   *
+   * @param id - The UUID of the command center.
+   */
   async delete(id: string): Promise<void> {
-    // Get entity for audit log before deletion
     const centerToDelete = await this.commandCenterRepository.findById(id);
 
     let isDeleted = false;
@@ -215,11 +260,16 @@ export class CommandCenterService {
             type: centerToDelete.type,
             location: centerToDelete.location,
           }
-        : null, // oldPayload
-      null, // newPayload
+        : null,
+      null,
     );
   }
 
+  /**
+   * Retrieves all command centers.
+   *
+   * @returns An array of `CommandCenterEntity`, or null if none exist.
+   */
   async getAll(): Promise<CommandCenterEntity[] | null> {
     try {
       return await this.commandCenterRepository.viewAll();
@@ -266,38 +316,59 @@ export class CommandCenterService {
     );
   }
 
+  /**
+   * Legacy flat-array endpoint. Retrieves a flat list of responders (max 20).
+   * Internally delegates to `filterResponders`.
+   *
+   * @param actorId - The UUID of the user performing the action.
+   * @param centerId - The UUID of the command center.
+   * @returns An array of `ResponderTableRow`.
+   */
   async getBranchResponders(
     actorId: string,
     centerId: string,
   ): Promise<ResponderTableRow[]> {
-    await this.assertBranchAccess(actorId, centerId);
-    try {
-      const result =
-        await this.commandCenterRepository.viewAllRespondersBranch(centerId);
-      return result.data;
-    } catch (error: unknown) {
-      this.rethrow(error, 'list responders of', centerId);
-    }
+    // Preserves the existing legacy quirk: only the first 20 are returned.
+    const result = await this.filterResponders(actorId, centerId, {
+      limit: 20,
+    });
+    return result.data;
   }
 
+  /**
+   * Legacy paginated endpoint. Retrieves a paginated list of responders.
+   * Internally delegates to `filterResponders`.
+   *
+   * @param actorId - The UUID of the user performing the action.
+   * @param centerId - The UUID of the command center.
+   * @param limit - Number of records to return (default 20).
+   * @param cursor - Base64 encoded tuple string for pagination.
+   * @returns Paginated `ResponderTableRow` array and a `nextCursor`.
+   */
   async getBranchRespondersPaginated(
     actorId: string,
     centerId: string,
     limit: number = 20,
     cursor: string | null = null,
   ): Promise<{ data: ResponderTableRow[]; nextCursor: string | null }> {
-    await this.assertBranchAccess(actorId, centerId);
-    try {
-      return await this.commandCenterRepository.viewAllRespondersBranch(
-        centerId,
-        limit,
-        cursor,
-      );
-    } catch (error: unknown) {
-      this.rethrow(error, 'list responders of', centerId);
-    }
+    return this.filterResponders(actorId, centerId, {
+      limit,
+      cursor: cursor ?? undefined,
+    });
   }
 
+  /**
+   * Legacy status-filtered paginated endpoint. Retrieves responders by status.
+   * Internally delegates to `filterResponders`.
+   * NOTE: Preserves the existing quirk where soft-deleted (deactivated) rows are included.
+   *
+   * @param actorId - The UUID of the user performing the action.
+   * @param centerId - The UUID of the command center.
+   * @param status - The account status to filter by.
+   * @param limit - Number of records to return (default 20).
+   * @param cursor - Base64 encoded tuple string for pagination.
+   * @returns Paginated `ResponderTableRow` array and a `nextCursor`.
+   */
   async getBranchRespondersByStatusPaginated(
     actorId: string,
     centerId: string,
@@ -305,19 +376,92 @@ export class CommandCenterService {
     limit: number = 20,
     cursor: string | null = null,
   ): Promise<{ data: ResponderTableRow[]; nextCursor: string | null }> {
+    return this.filterResponders(actorId, centerId, {
+      status: [status],
+      includeSoftDeleted: true, // Preserves existing behavior for this route
+      limit,
+      cursor: cursor ?? undefined,
+    });
+  }
+
+  /**
+   * Advanced filtering endpoint for responders. Supports statuses, availability,
+   * agency, date ranges, text search, and shift state.
+   *
+   * @param actorId - The UUID of the user performing the action.
+   * @param centerId - The UUID of the command center.
+   * @param filter - The raw DTO received from the controller.
+   * @returns Paginated `ResponderTableRow` array and a `nextCursor`.
+   */
+  async filterResponders(
+    actorId: string,
+    centerId: string,
+    filter: ResponderFilterDTO,
+  ): Promise<{ data: ResponderTableRow[]; nextCursor: string | null }> {
     await this.assertBranchAccess(actorId, centerId);
+
+    const normalized: NormalizedResponderFilter = {
+      status: filter.status,
+      availability: filter.availability,
+      agency: filter.agency,
+      search: filter.search,
+      createdFrom: normalizeBound(filter.createdFrom, 'from'),
+      createdTo: normalizeBound(filter.createdTo, 'to'),
+      updatedFrom: normalizeBound(filter.updatedFrom, 'from'),
+      updatedTo: normalizeBound(filter.updatedTo, 'to'),
+      lastActiveFrom: normalizeBound(filter.lastActiveFrom, 'from'),
+      lastActiveTo: normalizeBound(filter.lastActiveTo, 'to'),
+      onShift: filter.onShift,
+      includeSoftDeleted: filter.includeSoftDeleted === true,
+      limit: filter.limit ?? 20,
+      cursor: filter.cursor,
+    };
+
+    assertOrderedRange(normalized.createdFrom, normalized.createdTo, 'created');
+    assertOrderedRange(normalized.updatedFrom, normalized.updatedTo, 'updated');
+    assertOrderedRange(
+      normalized.lastActiveFrom,
+      normalized.lastActiveTo,
+      'lastActive',
+    );
+
     try {
-      return await this.commandCenterRepository.viewAllRespondersBasedOnStatusBranch(
+      return await this.commandCenterRepository.searchResponders(
         centerId,
-        status,
-        limit,
-        cursor,
+        normalized,
       );
     } catch (error: unknown) {
-      this.rethrow(error, 'list responders by status of', centerId);
+      this.rethrow(error, 'filter responders of', centerId);
     }
   }
 
+  /**
+   * Retrieves a minimal list of users (Admins and Responders) within a specific
+   * command center for use in selection dropdowns (e.g., Audit Log actor filter).
+   *
+   * @param actorId - The UUID of the user performing the action.
+   * @param centerId - The UUID of the command center.
+   * @returns An array of `ActorOption` objects.
+   */
+  async getBranchActors(
+    actorId: string,
+    centerId: string,
+  ): Promise<ActorOption[]> {
+    await this.assertBranchAccess(actorId, centerId);
+    try {
+      return await this.commandCenterRepository.findActorsInBranch(centerId);
+    } catch (error: unknown) {
+      this.rethrow(error, 'fetch actors for', centerId);
+    }
+  }
+
+  /**
+   * Deactivates a responder account and revokes their sessions.
+   *
+   * @param actorId - The UUID of the user performing the action.
+   * @param centerId - The UUID of the command center.
+   * @param responderId - The UUID of the responder to deactivate.
+   */
   async deactivateResponder(
     actorId: string,
     centerId: string,
@@ -333,6 +477,13 @@ export class CommandCenterService {
     );
   }
 
+  /**
+   * Activates a deactivated responder account.
+   *
+   * @param actorId - The UUID of the user performing the action.
+   * @param centerId - The UUID of the command center.
+   * @param responderId - The UUID of the responder to activate.
+   */
   async activateResponder(
     actorId: string,
     centerId: string,
@@ -348,6 +499,13 @@ export class CommandCenterService {
     );
   }
 
+  /**
+   * Revokes all active sessions for a specific responder.
+   *
+   * @param actorId - The UUID of the user performing the action.
+   * @param centerId - The UUID of the command center.
+   * @param responderId - The UUID of the responder.
+   */
   async revokeResponderSessions(
     actorId: string,
     centerId: string,
@@ -367,7 +525,11 @@ export class CommandCenterService {
    * Compromise response: revokes the responder's sessions, stores a hashed
    * single-use token (replacing any unused one) and emails the raw token to
    * the responder. The raw token is never returned to the admin who
-   * triggered this. If the email fails, calling it again issues a new token.
+   * triggered this.
+   *
+   * @param actorId - The UUID of the user performing the action.
+   * @param centerId - The UUID of the command center.
+   * @param responderId - The UUID of the responder.
    */
   async forceResponderPasswordReset(
     actorId: string,
@@ -439,6 +601,12 @@ export class CommandCenterService {
     );
   }
 
+  /**
+   * Retrieves the command center associated with the logged-in user.
+   *
+   * @param userId - The UUID of the user.
+   * @returns The user's `CommandCenterEntity`, or `null` if they are not assigned to one.
+   */
   async getMyCommandCenter(
     userId: string,
   ): Promise<CommandCenterEntity | null> {
@@ -451,6 +619,18 @@ export class CommandCenterService {
       actorScope.command_center_id,
     );
   }
+
+  /**
+   * Updates the email address of a responder. This is strictly limited to
+   * accounts in the 'pending_activation' state so they can receive their
+   * activation link at the correct address.
+   *
+   * @param email - The new email address.
+   * @param responderId - The UUID of the responder.
+   * @param commandCenterId - The UUID of the command center.
+   * @param actorId - The UUID of the user performing the action.
+   * @returns The previous email address.
+   */
   async updateEmail(
     email: string,
     responderId: string,
@@ -485,8 +665,6 @@ export class CommandCenterService {
         targetId: responderId,
         oldPayload: { email: oldEmail },
         newPayload: { email: email },
-        // id, createdAt handled by service
-        // actorName omitted from CreateAuditLogInput per type definition
       });
 
       await this.authService.createActivationToken(email, responderId);

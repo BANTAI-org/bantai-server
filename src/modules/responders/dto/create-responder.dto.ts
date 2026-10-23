@@ -14,6 +14,7 @@ import {
 import { AgencyTypeEnum } from '../enums/agency-type.enum';
 import { PoliceRank } from '../enums/police-rank.enum';
 import { Role } from '../../../common/enums/role-enum';
+import { ApiProperty } from '@nestjs/swagger';
 
 // Mirrors the Postgres check on f_name / l_name / m_name:
 // letters (any script), whitespace, and hyphens only.
@@ -62,6 +63,7 @@ const trimToUndefined = ({ value }: { value: unknown }): unknown => {
  * normalization (trim, lowercase email) to actually run.
  */
 export class CreateResponderDto {
+  @ApiProperty({ description: 'Responder first name', example: 'Ana' })
   @Transform(trim)
   @IsString()
   @IsNotEmpty()
@@ -71,6 +73,7 @@ export class CreateResponderDto {
   })
   f_name!: string;
 
+  @ApiProperty({ description: 'Responder last name', example: 'Reyes' })
   @Transform(trim)
   @IsString()
   @IsNotEmpty()
@@ -80,6 +83,11 @@ export class CreateResponderDto {
   })
   l_name!: string;
 
+  @ApiProperty({
+    required: false,
+    description: 'Responder middle name',
+    example: 'Santos',
+  })
   @Transform(trimToUndefined)
   @IsOptional()
   @IsString()
@@ -91,6 +99,10 @@ export class CreateResponderDto {
 
   // Emails are case-insensitive in practice but Postgres compares them
   // exactly, so normalize once here and everything downstream is safe.
+  @ApiProperty({
+    description: 'Account email address',
+    example: 'ana.reyes@example.com',
+  })
   @Transform(({ value }: { value: unknown }) =>
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )
@@ -105,6 +117,12 @@ export class CreateResponderDto {
    * never be requested through this endpoint, regardless of any
    * role-based guard elsewhere in the request pipeline.
    */
+  @ApiProperty({
+    required: false,
+    enum: [Role.RESPONDER, Role.ADMIN],
+    description: 'Account role (defaults to responder)',
+    example: Role.RESPONDER,
+  })
   @IsOptional()
   @IsIn([Role.RESPONDER, Role.ADMIN], {
     message: 'role must be either responder or admin.',
@@ -118,6 +136,12 @@ export class CreateResponderDto {
    * Role.ADMIN, since an admin account has no r_profile row and this
    * value would otherwise be silently meaningless.
    */
+  @ApiProperty({
+    required: false,
+    enum: AgencyTypeEnum,
+    description: 'Responder agency, required for responder accounts',
+    example: AgencyTypeEnum.POLICE,
+  })
   @ValidateIf(
     (dto: CreateResponderDto) =>
       (dto.role ?? Role.RESPONDER) === Role.RESPONDER,
@@ -125,12 +149,28 @@ export class CreateResponderDto {
   @IsEnum(AgencyTypeEnum)
   agency?: AgencyTypeEnum;
 
+  @ApiProperty({
+    required: false,
+    description: 'Responder call sign',
+    example: 'ALPHA-12',
+  })
   @Transform(trimToUndefined)
+  @ApiProperty({
+    required: false,
+    enum: PoliceRank,
+    description: 'Police rank when applicable',
+    example: PoliceRank.PCPT,
+  })
   @IsOptional()
   @IsString()
   @MaxLength(50)
   call_sign?: string;
 
+  @ApiProperty({
+    required: false,
+    description: 'Philippine mobile number in E.164 format',
+    example: '+639171234567',
+  })
   @IsOptional()
   @IsEnum(PoliceRank)
   rank?: PoliceRank;
@@ -142,6 +182,12 @@ export class CreateResponderDto {
   m_number?: string;
 
   // Optional in body validation; required when caller is Role.SUPER
+  @ApiProperty({
+    required: false,
+    description:
+      'Command center UUID; required when created by a super administrator',
+    example: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+  })
   @Transform(trimToUndefined)
   @IsOptional()
   @IsUUID('4', { message: 'command_center_id must be a valid UUID v4' })

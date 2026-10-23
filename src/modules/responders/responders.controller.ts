@@ -31,14 +31,28 @@ import { UserIdType } from './types/user-id.types';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { GoOnDutyDto } from './dto/go-on-duty.dto';
 import { DutyChangeResponse } from './responders.service';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 
 type AuthenticatedRequest = Request & { user: JwtPayload };
 
 @Controller('responders')
+@ApiTags('Responders')
+@ApiBearerAuth('access-token')
 export class RespondersController {
   constructor(private readonly responderService: ResponderService) {}
 
   @Post()
+  @ApiOperation({ summary: 'Create a responder or administrator account' })
+  @ApiBody({ type: CreateResponderDto })
+  @ApiResponse({ status: 201, description: 'Account created' })
+  @ApiResponse({ status: 400, description: 'Invalid account data' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPER)
   async createResponder(
@@ -75,6 +89,9 @@ export class RespondersController {
   }
 
   @Get('profile')
+  @ApiOperation({ summary: 'Get the authenticated responder profile' })
+  @ApiResponse({ status: 200, description: 'Responder profile returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
   async getProfile(@CurrentUser('sub') userId: string) {
@@ -82,6 +99,11 @@ export class RespondersController {
   }
 
   @Patch('profile')
+  @ApiOperation({ summary: 'Update the authenticated responder profile' })
+  @ApiBody({ type: PatchResponderProfileDto })
+  @ApiResponse({ status: 200, description: 'Responder profile updated' })
+  @ApiResponse({ status: 400, description: 'Invalid profile data' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
   async updateProfile(
@@ -92,6 +114,11 @@ export class RespondersController {
   }
 
   @Post('request-mnumber-otp')
+  @ApiOperation({ summary: 'Request OTP to verify a responder mobile number' })
+  @ApiBody({ type: SendOtpDto })
+  @ApiResponse({ status: 201, description: 'OTP request accepted' })
+  @ApiResponse({ status: 400, description: 'Invalid mobile number' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.RESPONDER)
   async requestMnumberOtp(
@@ -102,6 +129,11 @@ export class RespondersController {
   }
 
   @Post('verify-mnumber-otp')
+  @ApiOperation({ summary: 'Verify a responder mobile number OTP' })
+  @ApiBody({ type: VerifyOtpDto })
+  @ApiResponse({ status: 201, description: 'Mobile number verified' })
+  @ApiResponse({ status: 400, description: 'Invalid or expired OTP' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.RESPONDER)
   async verifyMnumberOtp(
@@ -112,6 +144,10 @@ export class RespondersController {
   }
 
   @Post('forgot-password/request')
+  @ApiOperation({ summary: 'Request a responder password reset OTP' })
+  @ApiBody({ type: PasswordResetIdentityDto })
+  @ApiResponse({ status: 202, description: 'Password reset request accepted' })
+  @ApiResponse({ status: 400, description: 'Invalid identity information' })
   @HttpCode(HttpStatus.ACCEPTED)
   async requestPasswordReset(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
@@ -121,6 +157,10 @@ export class RespondersController {
   }
 
   @Post('forgot-password/verify')
+  @ApiOperation({ summary: 'Verify a responder password reset OTP' })
+  @ApiBody({ type: VerifyOtpDto })
+  @ApiResponse({ status: 200, description: 'Reset token issued' })
+  @ApiResponse({ status: 400, description: 'Invalid or expired OTP' })
   @HttpCode(HttpStatus.OK)
   async verifyPasswordResetOtp(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
@@ -130,6 +170,10 @@ export class RespondersController {
   }
 
   @Post('forgot-password/reset')
+  @ApiOperation({ summary: 'Reset a responder password' })
+  @ApiBody({ type: ResetPasswordDto })
+  @ApiResponse({ status: 204, description: 'Password reset' })
+  @ApiResponse({ status: 400, description: 'Invalid reset token or password' })
   @HttpCode(HttpStatus.NO_CONTENT)
   async resetPassword(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
@@ -139,6 +183,11 @@ export class RespondersController {
   }
 
   @Post('duty/on')
+  @ApiOperation({ summary: 'Put the authenticated responder on duty' })
+  @ApiBody({ type: GoOnDutyDto })
+  @ApiResponse({ status: 200, description: 'Responder is on duty' })
+  @ApiResponse({ status: 400, description: 'Invalid duty duration' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.RESPONDER)
@@ -150,6 +199,9 @@ export class RespondersController {
   }
 
   @Post('duty/off')
+  @ApiOperation({ summary: 'Take the authenticated responder off duty' })
+  @ApiResponse({ status: 200, description: 'Responder is off duty' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.RESPONDER)

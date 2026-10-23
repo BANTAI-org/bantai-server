@@ -11,13 +11,36 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { DashboardService } from './dashboard.service';
 import { DashboardStatsDto } from './interfaces/dashboard-stats.dto';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 
 @Controller('dashboard')
 @UseGuards(JwtGuard, RolesGuard)
+@ApiTags('Dashboard')
+@ApiBearerAuth('access-token')
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 
   @Get('stats')
+  @ApiOperation({ summary: 'Get dashboard statistics' })
+  @ApiQuery({
+    name: 'commandCenterId',
+    required: false,
+    type: String,
+    description:
+      'Required for super administrators; ignored for administrators',
+  })
+  @ApiResponse({ status: 200, description: 'Dashboard statistics returned' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid or missing command center',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.ADMIN, Role.SUPER)
   async getStats(
     @CurrentUser() user: JwtPayload,

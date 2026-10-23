@@ -2,12 +2,19 @@ import { Transform } from 'class-transformer';
 import { ArrayNotEmpty, ArrayUnique, IsArray, IsEnum } from 'class-validator';
 import { IncidentStatus } from '../enums/incident-status.enum';
 import { PageQueryDto } from '../../../common/dto/page-query.dto';
+import { ApiProperty } from '@nestjs/swagger';
 /**
  * Query for findIncidentsByStatus. Accepts a comma list
  * (?statuses=DETECTED,DISPATCHING) or a repeated param
  * (?statuses=DETECTED&statuses=DISPATCHING).
  */
 export class FindIncidentsByStatusQueryDto extends PageQueryDto {
+  @ApiProperty({
+    enum: IncidentStatus,
+    isArray: true,
+    description: 'One or more incident statuses to include',
+    example: [IncidentStatus.DETECTED, IncidentStatus.DISPATCHING],
+  })
   @Transform(({ value }: { value: unknown }) => {
     // Only real strings are split. Anything else (undefined, an object from
     // ?statuses[a]=1, ...) is returned untouched so @IsArray / @IsEnum reject

@@ -19,22 +19,40 @@ import { CommandCenterService } from './command-center.service';
 import { CreateCommandCenterDTO } from './dto/create-command-center.dto';
 import { UpdateCommandCenterDTO } from './dto/update-command-center.dto';
 import { UpdateResponderEmailDTO } from './dto/update-email.dto';
+import { ResponderFilterDTO } from './dto/responder-filter.dto';
 import { CommandCenterEntity } from './interfaces/command-center.interface';
 import { ResponderTableRow } from './interfaces/responder-tb.interface';
+import { ActorOption } from './interfaces/action-option.interface';
 import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { Roles } from '../../common/decorators/role.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AccountStatusEnum } from '../../modules/auth/enums/account-status.enum';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 
 type AuthenticatedRequest = Request & { user: JwtPayload };
 
 @Controller('command-centers')
 @UseGuards(JwtGuard, RolesGuard)
+@ApiTags('Command Centers')
+@ApiBearerAuth('access-token')
 export class CommandCenterController {
   constructor(private readonly commandCenterService: CommandCenterService) {}
 
   @Post()
+  @ApiOperation({ summary: 'Create a command center' })
+  @ApiBody({ type: CreateCommandCenterDTO })
+  @ApiResponse({ status: 201, description: 'Command center created' })
+  @ApiResponse({ status: 400, description: 'Invalid command center data' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.SUPER)
   async create(
     @Body() dto: CreateCommandCenterDTO,
@@ -43,6 +61,13 @@ export class CommandCenterController {
   }
 
   @Patch(':id')
+  @ApiOperation({ summary: 'Update a command center' })
+  @ApiParam({ name: 'id', description: 'Command center UUID' })
+  @ApiBody({ type: UpdateCommandCenterDTO })
+  @ApiResponse({ status: 200, description: 'Command center updated' })
+  @ApiResponse({ status: 400, description: 'Invalid command center data' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Command center not found' })
   @Roles(Role.SUPER)
   async update(
     @Param('id') id: string,
@@ -52,6 +77,11 @@ export class CommandCenterController {
   }
 
   @Delete(':id')
+  @ApiOperation({ summary: 'Delete a command center' })
+  @ApiParam({ name: 'id', description: 'Command center UUID' })
+  @ApiResponse({ status: 204, description: 'Command center deleted' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Command center not found' })
   @Roles(Role.SUPER)
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@Param('id') id: string): Promise<void> {
@@ -64,6 +94,10 @@ export class CommandCenterController {
   // -------------------------------------------------------------
 
   @Get(':centerId/responders')
+  @ApiOperation({ summary: 'List responders in a command center' })
+  @ApiParam({ name: 'centerId', description: 'Command center UUID' })
+  @ApiResponse({ status: 200, description: 'Responders returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.SUPER, Role.ADMIN)
   async listResponders(
     @Param('centerId', ParseUUIDPipe) centerId: string,
@@ -74,6 +108,12 @@ export class CommandCenterController {
   }
 
   @Get(':centerId/responders/paginated')
+  @ApiOperation({ summary: 'List responders in a command center by page' })
+  @ApiParam({ name: 'centerId', description: 'Command center UUID' })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'cursor', required: false, type: String })
+  @ApiResponse({ status: 200, description: 'Responder page returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.SUPER, Role.ADMIN)
   async listRespondersPaginated(
     @Param('centerId', ParseUUIDPipe) centerId: string,
@@ -91,6 +131,13 @@ export class CommandCenterController {
   }
 
   @Get(':centerId/responders/status/:status')
+  @ApiOperation({ summary: 'List command center responders by account status' })
+  @ApiParam({ name: 'centerId', description: 'Command center UUID' })
+  @ApiParam({ name: 'status', description: 'Responder account status' })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'cursor', required: false, type: String })
+  @ApiResponse({ status: 200, description: 'Responder page returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.SUPER, Role.ADMIN)
   async listRespondersByStatusPaginated(
     @Param('centerId', ParseUUIDPipe) centerId: string,
@@ -109,7 +156,55 @@ export class CommandCenterController {
     );
   }
 
+  @Get(':centerId/responders/filter')
+  @ApiOperation({
+    summary: 'Filter responders in a command center',
+    description:
+      'All filters compose with AND. Multi-value filters are accepted as ' +
+      'repeated params (`?status=active&status=deactivated`) or ' +
+      'comma-separated (`?status=active,deactivated`). ' +
+      'Date-only values are anchored to UTC days. ' +
+      'Soft-deleted (deactivated) responders are excluded unless ' +
+      '`includeSoftDeleted=true`.',
+  })
+  @ApiParam({ name: 'centerId', description: 'Command center UUID' })
+  @ApiResponse({ status: 200, description: 'Responder page returned' })
+  @ApiResponse({ status: 400, description: 'Invalid filter parameters' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Not your command center' })
+  @Roles(Role.SUPER, Role.ADMIN)
+  async filterResponders(
+    @Param('centerId', ParseUUIDPipe) centerId: string,
+    @Query() filter: ResponderFilterDTO,
+    @CurrentUser('sub') userId: string,
+  ): Promise<{ data: ResponderTableRow[]; nextCursor: string | null }> {
+    return this.commandCenterService.filterResponders(userId, centerId, filter);
+  }
+
+  @Get(':centerId/actors')
+  @ApiOperation({
+    summary: 'List admins and responders in a command center',
+    description:
+      'Returns the id and name of users in the branch. Used to populate the "Filter Actor" dropdown in the audit log UI.',
+  })
+  @ApiParam({ name: 'centerId', description: 'Command center UUID' })
+  @ApiResponse({ status: 200, description: 'Actors returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @Roles(Role.SUPER, Role.ADMIN)
+  async getBranchActors(
+    @Param('centerId', ParseUUIDPipe) centerId: string,
+    @CurrentUser('sub') userId: string,
+  ): Promise<ActorOption[]> {
+    return this.commandCenterService.getBranchActors(userId, centerId);
+  }
+
   @Patch(':centerId/responders/:responderId/deactivate')
+  @ApiOperation({ summary: 'Deactivate a responder account' })
+  @ApiParam({ name: 'centerId', description: 'Command center UUID' })
+  @ApiParam({ name: 'responderId', description: 'Responder UUID' })
+  @ApiResponse({ status: 204, description: 'Responder deactivated' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Responder not found' })
   @Roles(Role.SUPER, Role.ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   async deactivateResponder(
@@ -126,6 +221,12 @@ export class CommandCenterController {
   }
 
   @Patch(':centerId/responders/:responderId/activate')
+  @ApiOperation({ summary: 'Activate a responder account' })
+  @ApiParam({ name: 'centerId', description: 'Command center UUID' })
+  @ApiParam({ name: 'responderId', description: 'Responder UUID' })
+  @ApiResponse({ status: 204, description: 'Responder activated' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Responder not found' })
   @Roles(Role.SUPER, Role.ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   async activateResponder(
@@ -142,6 +243,12 @@ export class CommandCenterController {
   }
 
   @Post(':centerId/responders/:responderId/revoke-sessions')
+  @ApiOperation({ summary: 'Revoke all responder sessions' })
+  @ApiParam({ name: 'centerId', description: 'Command center UUID' })
+  @ApiParam({ name: 'responderId', description: 'Responder UUID' })
+  @ApiResponse({ status: 204, description: 'Responder sessions revoked' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Responder not found' })
   @Roles(Role.SUPER, Role.ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   async revokeResponderSessions(
@@ -158,6 +265,12 @@ export class CommandCenterController {
   }
 
   @Post(':centerId/responders/:responderId/force-password-reset')
+  @ApiOperation({ summary: 'Require a responder password reset' })
+  @ApiParam({ name: 'centerId', description: 'Command center UUID' })
+  @ApiParam({ name: 'responderId', description: 'Responder UUID' })
+  @ApiResponse({ status: 204, description: 'Password reset required' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Responder not found' })
   @Roles(Role.SUPER, Role.ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   async forceResponderPasswordReset(
@@ -174,6 +287,14 @@ export class CommandCenterController {
   }
 
   @Patch(':centerId/responders/:responderId/email')
+  @ApiOperation({ summary: 'Update a responder email address' })
+  @ApiParam({ name: 'centerId', description: 'Command center UUID' })
+  @ApiParam({ name: 'responderId', description: 'Responder UUID' })
+  @ApiBody({ type: UpdateResponderEmailDTO })
+  @ApiResponse({ status: 200, description: 'Responder email updated' })
+  @ApiResponse({ status: 400, description: 'Invalid email address' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Responder not found' })
   @Roles(Role.SUPER, Role.ADMIN)
   async updateResponderEmail(
     @Param('centerId', ParseUUIDPipe) centerId: string,
@@ -190,6 +311,9 @@ export class CommandCenterController {
   }
 
   @Get('me')
+  @ApiOperation({ summary: 'Get the authenticated user command center' })
+  @ApiResponse({ status: 200, description: 'Command center returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.ADMIN, Role.SUPER)
   async getMyCommandCenter(
     @CurrentUser('sub') userId: string,
@@ -198,6 +322,9 @@ export class CommandCenterController {
   }
 
   @Get()
+  @ApiOperation({ summary: 'List all command centers' })
+  @ApiResponse({ status: 200, description: 'Command centers returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.SUPER)
   async getAllCommandCenters(): Promise<CommandCenterEntity[]> {
     const centers = await this.commandCenterService.getAll();

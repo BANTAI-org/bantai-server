@@ -23,6 +23,7 @@ import { ThreatCategory } from '../enums/threat-category.enum';
 import { ThreatType } from '../enums/threat-type.enum';
 import { TriggerSource } from '../enums/trigger-source.enum';
 import { IncidentEvidenceItemDto } from './evidence-item.dto';
+import { ApiProperty } from '@nestjs/swagger';
 /**
  * Request shape of a location. Must stay compatible with the shared GeoPoint.
  * @IsNumber first: IsLongitude / IsLatitude alone also accept numeric STRINGS
@@ -30,10 +31,18 @@ import { IncidentEvidenceItemDto } from './evidence-item.dto';
  * (GeoPointDTO in geo-point.dto.ts is the same shape; consider keeping one.)
  */
 export class LocationDto implements GeoPoint {
+  @ApiProperty({
+    description: 'Longitude of the incident location',
+    example: 121.0437,
+  })
   @IsNumber()
   @IsLongitude()
   longitude!: number;
 
+  @ApiProperty({
+    description: 'Latitude of the incident location',
+    example: 14.676,
+  })
   @IsNumber()
   @IsLatitude()
   latitude!: number;
@@ -116,42 +125,92 @@ class IncidentCrossFieldRules implements ValidatorConstraintInterface {
  * service must answer that itself (409/422), it is not visible in this DTO.
  */
 export class CreateIncidentDto {
+  @ApiProperty({
+    enum: TriggerSource,
+    description: 'Source that triggered the incident',
+    example: TriggerSource.MANUAL_SOS,
+  })
   @IsEnum(TriggerSource)
   @Validate(IncidentCrossFieldRules)
   trigger_source!: TriggerSource;
 
+  @ApiProperty({
+    type: () => LocationDto,
+    description: 'Geographic location of the incident',
+    example: { latitude: 14.676, longitude: 121.0437 },
+  })
   @IsDefined()
   @ValidateNested()
   @Type(() => LocationDto)
   location!: LocationDto;
 
+  @ApiProperty({
+    enum: ThreatType,
+    description: 'Primary threat type',
+    example: ThreatType.CONFRONTATION,
+  })
   @IsEnum(ThreatType)
   threat_type!: ThreatType;
 
+  @ApiProperty({
+    enum: ThreatCategory,
+    description: 'Threat category',
+    example: ThreatCategory.HAZARD,
+  })
   @IsEnum(ThreatCategory)
   threat_category!: ThreatCategory;
 
   /** 0..1, NUMERIC(5,4). Required for EDGE_AI, omitted otherwise. */
+  @ApiProperty({
+    required: false,
+    description:
+      'AI confidence from 0 to 1; required only for EDGE_AI incidents',
+    example: 0.94,
+  })
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 4 })
   @Min(0)
   @Max(1)
   confidence_level?: number | null;
 
+  @ApiProperty({
+    required: false,
+    description: 'Source device UUID; required for EDGE_AI incidents',
+    example: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+  })
   @IsOptional()
   @IsUUID()
   device_id?: string | null;
 
+  @ApiProperty({
+    required: false,
+    description: 'Driver UUID; accepted only for CENTER_MANUAL incidents',
+    example: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+  })
   @IsOptional()
   @IsUUID()
   driver_id?: string | null;
 
   /** Defaults to UNKNOWN in the database when omitted. */
+  @ApiProperty({
+    required: false,
+    enum: IncidentSeverity,
+    description: 'Incident severity',
+    example: IncidentSeverity.CRITICAL,
+  })
   @IsOptional()
   @IsEnum(IncidentSeverity)
   severity?: IncidentSeverity;
 
   /** Defaults to []. Max 100 items (database limit). */
+  @ApiProperty({
+    required: false,
+    type: () => [IncidentEvidenceItemDto],
+    description: 'Evidence attached to the incident',
+    example: [
+      { key: 'incidents/evidence/photo.jpg', content_type: 'image/jpeg' },
+    ],
+  })
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(100)

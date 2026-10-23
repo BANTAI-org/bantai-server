@@ -1,6 +1,7 @@
 import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
 import { QueryResult } from 'pg';
 import { DatabaseService } from './database/database.service';
+import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 interface HealthCheckDbRow {
   postgres_version: string;
@@ -9,10 +10,14 @@ interface HealthCheckDbRow {
 }
 
 @Controller('health')
+@ApiTags('Health')
 export class AppController {
   constructor(private readonly db: DatabaseService) {}
 
   @Get()
+  @ApiOperation({ summary: 'Check API and database health' })
+  @ApiResponse({ status: 200, description: 'API and database are available' })
+  @ApiResponse({ status: 503, description: 'Database is unavailable' })
   async checkHealth() {
     const startTime = Date.now();
 

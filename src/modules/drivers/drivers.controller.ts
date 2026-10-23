@@ -37,7 +37,17 @@ import { ChangeDutyDto } from './dto/change-duty-driver.dto';
 import { IncidentService } from '../incidents/incidents.service';
 import { RedisService } from '../redis/redis.service';
 import { haversineDistance } from '../../common/utils/geo.utils';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiParam,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 @Controller('drivers')
+@ApiTags('Drivers')
+@ApiBearerAuth('access-token')
 export class DriverController {
   constructor(
     private readonly driverService: DriverService,
@@ -49,6 +59,10 @@ export class DriverController {
   private readonly MAX_LOCATION_AGE_MS = 30_000;
 
   @Post('register')
+  @ApiOperation({ summary: 'Register a driver account' })
+  @ApiBody({ type: CreateDriverDto })
+  @ApiResponse({ status: 201, description: 'Driver account created' })
+  @ApiResponse({ status: 400, description: 'Invalid registration data' })
   @HttpCode(HttpStatus.CREATED)
   async register(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
@@ -68,6 +82,11 @@ export class DriverController {
   }
 
   @Patch('profile')
+  @ApiOperation({ summary: 'Update the authenticated driver profile' })
+  @ApiBody({ type: PatchDriverProfileDto })
+  @ApiResponse({ status: 200, description: 'Driver profile updated' })
+  @ApiResponse({ status: 400, description: 'Invalid profile data' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.DRIVER)
   @HttpCode(HttpStatus.OK)
@@ -82,6 +101,10 @@ export class DriverController {
   }
 
   @Post('forgot-password/request')
+  @ApiOperation({ summary: 'Request a driver password reset OTP' })
+  @ApiBody({ type: PasswordResetIdentityDto })
+  @ApiResponse({ status: 202, description: 'Password reset request accepted' })
+  @ApiResponse({ status: 400, description: 'Invalid identity information' })
   @HttpCode(HttpStatus.ACCEPTED)
   async requestPasswordReset(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
@@ -91,6 +114,10 @@ export class DriverController {
   }
 
   @Post('forgot-password/verify')
+  @ApiOperation({ summary: 'Verify a driver password reset OTP' })
+  @ApiBody({ type: VerifyOtpDto })
+  @ApiResponse({ status: 200, description: 'Reset token issued' })
+  @ApiResponse({ status: 400, description: 'Invalid or expired OTP' })
   @HttpCode(HttpStatus.OK)
   async verifyPasswordResetOtp(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
@@ -100,6 +127,10 @@ export class DriverController {
   }
 
   @Post('forgot-password/reset')
+  @ApiOperation({ summary: 'Reset a driver password' })
+  @ApiBody({ type: ResetPasswordDto })
+  @ApiResponse({ status: 204, description: 'Password reset' })
+  @ApiResponse({ status: 400, description: 'Invalid reset token or password' })
   @HttpCode(HttpStatus.NO_CONTENT)
   async resetPassword(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
@@ -109,6 +140,9 @@ export class DriverController {
   }
 
   @Get()
+  @ApiOperation({ summary: 'Get the authenticated driver profile' })
+  @ApiResponse({ status: 200, description: 'Driver profile returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.DRIVER)
@@ -120,6 +154,11 @@ export class DriverController {
   }
 
   @Patch('duty')
+  @ApiOperation({ summary: 'Update the authenticated driver duty status' })
+  @ApiBody({ type: ChangeDutyDto })
+  @ApiResponse({ status: 200, description: 'Duty status updated' })
+  @ApiResponse({ status: 400, description: 'Invalid duty status' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.DRIVER)
@@ -132,6 +171,12 @@ export class DriverController {
   }
 
   @Get(':driverId/incidents/:incidentId/responder-distance')
+  @ApiOperation({ summary: 'Get responder distance for a driver incident' })
+  @ApiParam({ name: 'driverId', description: 'Driver UUID' })
+  @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
+  @ApiResponse({ status: 200, description: 'Responder distance returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.DRIVER)
