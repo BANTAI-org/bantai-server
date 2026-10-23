@@ -1,12 +1,18 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { CommsRepository } from './comms.repository';
 import { RealtimeKitService } from './realtimekit.service';
 import { CommParticipantRole } from './enums/comms-participant-role.enum';
 import { CommRadioStatus } from './enums/comms-radio-status.enum';
 import { Role } from '../../common/enums/role-enum';
 import { CommsEvents } from './comms.gateway';
-import { CommMessage } from './interfaces/comms-message.interface';
+import type { CommMessage } from './interfaces/comms-message.interface';
+import { IncidentEvents } from '../incidents/events/incident-events';
+import type { IncidentCreatedEvent } from '../incidents/events/incident-events';
 
 @Injectable()
 export class CommsService {
@@ -18,16 +24,24 @@ export class CommsService {
 
   /**
    * @description
-   * Handles a user joining a tactical channel.
-   * Validates the channel exists, adds the user to the database, and generates
-   * a secure Cloudflare RealtimeKit token so the Flutter app can connect to the WebRTC audio room.
-   *
-   * @param {string} incidentId - The UUID of the incident.
-   * @param {string} userId - The UUID of the user joining.
-   * @param {Role} userRole - The system role of the user (Driver, Responder, Admin).
-   * @param {string} displayName - The name/callsign to display in the UI.
-   * @returns {Promise<{ channelId: string; authToken: string }>} The channel ID and RealtimeKit auth token.
-   * @throws {NotFoundException} If there is no active comms channel for this incident.
+   * Automatically spawns a communications channel when an incident is created.
+   * Creates the channel in Postgres and initializes the WebRTC room in Cloudflare.
+   */
+  @OnEvent(IncidentEvents.CREATED)
+  async handleIncidentCreated(event: IncidentCreatedEvent): Promise<void> {
+    const channelName = `Incident ${event.incidentId.substring(0, 8)} - ${event.threatType}`;
+
+    // 1. Create in Postgres
+    await this.repo.createIncidentChannel(event.incidentId, channelName);
+
+    // 2. Create in Cloudflare RealtimeKit
+    await this.realtimeKit.createMeeting(channelName);
+  }
+
+  /**
+   * @description
+   * Handles a user joining the tactical channel for an incident.
+   * Returns the channelId and the RealtimeKit authToken for WebRTC.
    */
   async joinChannel(
     incidentId: string,
@@ -40,7 +54,6 @@ export class CommsService {
       throw new NotFoundException('No active comms channel for this incident');
     }
 
-    // Map system Role to Comms Participant Role
     let commsRole = CommParticipantRole.PEER;
     if (userRole === Role.RESPONDER) {
       commsRole = CommParticipantRole.RESPONDER;
@@ -49,10 +62,8 @@ export class CommsService {
       commsRole = CommParticipantRole.DISPATCHER;
     }
 
-    // Register in Postgres
     await this.repo.addParticipant(channel.id, userId, commsRole);
 
-    // Generate Cloudflare RealtimeKit token (using channel.id as meetingId)
     const authToken = await this.realtimeKit.generateParticipantToken(
       channel.id,
       userId,
@@ -64,60 +75,54 @@ export class CommsService {
 
   /**
    * @description
-   * Handles a user requesting the Push-to-Talk microphone.
-   * Assigns a priority based on the user's role. If the room is silent,
-   * the user is granted the mic immediately. Otherwise, they are added to the queue.
-   *
-   * @param {string} channelId - The UUID of the channel.
-   * @param {string} userId - The UUID of the user requesting the mic.
-   * @param {Role} userRole - The system role of the user (used to calculate priority).
-   * @returns {Promise<void>}
+   * Request the Push-to-Talk microphone. Enforces permissions before granting.
    */
   async requestMic(
     channelId: string,
     userId: string,
     userRole: Role,
   ): Promise<void> {
-    const currentSpeaker = await this.repo.getCurrentSpeaker(channelId);
+    const channel = await this.repo.getChannelById(channelId);
+    if (!channel || !channel.incident_id) {
+      throw new NotFoundException('Channel not found');
+    }
 
-    // Responders and Dispatchers get priority 100, Peers get 10
+    // 1. Permission Check
+    const canComm = await this.repo.canUserCommunicate(
+      channel.incident_id,
+      userId,
+      userRole,
+    );
+    if (!canComm) {
+      throw new ForbiddenException(
+        'You must be en route or on scene to speak.',
+      );
+    }
+
+    const currentSpeaker = await this.repo.getCurrentSpeaker(channelId);
     const isResponder =
       userRole === Role.RESPONDER ||
       userRole === Role.ADMIN ||
       userRole === Role.SUPER;
     const priority = isResponder ? 100 : 10;
 
-    // Insert into queue
     const queueId = await this.repo.requestMic(channelId, userId, priority);
 
-    // If no one is speaking, grant immediately
     if (!currentSpeaker) {
       await this.repo.updateRadioStatus(queueId, CommRadioStatus.SPEAKING);
     }
 
-    // Broadcast the updated queue to all clients
     await this.emitQueueUpdate(channelId);
   }
 
   /**
    * @description
-   * Handles a user releasing the microphone.
-   * Marks their queue entry as 'completed' and automatically grants the mic
-   * to the next highest-priority person waiting in the queue.
-   *
-   * @param {string} channelId - The UUID of the channel.
-   * @param {string} queueId - The UUID of the specific queue entry being released.
-   * @returns {Promise<void>}
+   * Release the Push-to-Talk microphone and grant it to the next in line.
    */
   async releaseMic(channelId: string, queueId: string): Promise<void> {
-    // Mark current speaker as done
     await this.repo.updateRadioStatus(queueId, CommRadioStatus.COMPLETED);
-
-    // The view sorts by 'speaking' first, then priority DESC, then requested_at ASC.
-    // Since we just completed the speaker, the next person is now at index 0.
     const queue = await this.repo.getRadioQueue(channelId);
 
-    // If there's someone next in line, grant them the mic
     if (queue.length > 0) {
       const nextInLine = queue[0];
       await this.repo.updateRadioStatus(
@@ -126,39 +131,42 @@ export class CommsService {
       );
     }
 
-    // Broadcast the updated queue to all clients
     await this.emitQueueUpdate(channelId);
   }
 
   /**
    * @description
-   * Saves a text message to the database and broadcasts it
-   * to all participants in the channel via WebSockets.
-   *
-   * @param {string} channelId - The UUID of the channel.
-   * @param {string} senderId - The UUID of the user sending the message.
-   * @param {string} content - The text content of the message.
-   * @returns {Promise<CommMessage>} The saved message object.
+   * Send a text message to the channel. Enforces permissions before saving.
    */
   async sendMessage(
     channelId: string,
     senderId: string,
+    userRole: Role,
     content: string,
   ): Promise<CommMessage> {
-    const message = await this.repo.saveMessage(channelId, senderId, content);
+    const channel = await this.repo.getChannelById(channelId);
+    if (!channel || !channel.incident_id) {
+      throw new NotFoundException('Channel not found');
+    }
 
-    // Broadcast to WebSocket
+    // 1. Permission Check
+    const canComm = await this.repo.canUserCommunicate(
+      channel.incident_id,
+      senderId,
+      userRole,
+    );
+    if (!canComm) {
+      throw new ForbiddenException('You must be en route or on scene to chat.');
+    }
+
+    const message = await this.repo.saveMessage(channelId, senderId, content);
     this.events.emit(CommsEvents.MESSAGE_NEW, { channelId, message });
     return message;
   }
 
   /**
    * @description
-   * Retrieves the chat history for a specific channel.
-   *
-   * @param {string} channelId - The UUID of the channel.
-   * @param {number} [limit=50] - Maximum number of messages to return.
-   * @returns {Promise<CommMessage[]>} An array of past messages.
+   * Get the chat history for a channel.
    */
   async getMessageHistory(
     channelId: string,
@@ -169,11 +177,7 @@ export class CommsService {
 
   /**
    * @description
-   * Internal helper that fetches the latest queue from the database
-   * and emits an event for the Gateway to broadcast to WebSocket clients.
-   *
-   * @param {string} channelId - The UUID of the channel.
-   * @returns {Promise<void>}
+   * Internal helper to broadcast the updated Push-to-Talk queue.
    */
   private async emitQueueUpdate(channelId: string): Promise<void> {
     const queue = await this.repo.getRadioQueue(channelId);

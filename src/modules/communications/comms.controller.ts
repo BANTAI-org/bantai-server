@@ -40,8 +40,7 @@ export class CommsController {
   /**
    * @description
    * Joins the tactical channel for a specific incident.
-   * Validates the user, registers them in the database, and returns
-   * a Cloudflare RealtimeKit token for the WebRTC voice connection.
+   * Returns the Cloudflare RealtimeKit token.
    */
   @Post(':incidentId/join')
   @ApiOperation({
@@ -56,10 +55,6 @@ export class CommsController {
     status: 201,
     description: 'Successfully joined channel',
     type: JoinChannelResponseDto,
-  })
-  @ApiResponse({
-    status: 404,
-    description: 'Channel not found for this incident',
   })
   async join(
     @Param('incidentId', ParseUUIDPipe) incidentId: string,
@@ -78,8 +73,7 @@ export class CommsController {
   /**
    * @description
    * Request the Push-to-Talk microphone.
-   * If the channel is silent, the user is immediately granted the mic.
-   * If someone is speaking, the user is added to the priority queue.
+   * Peers must be en_route or on_scene to request.
    */
   @Post(':channelId/radio/request')
   @HttpCode(HttpStatus.OK)
@@ -88,6 +82,10 @@ export class CommsController {
   @ApiResponse({
     status: 200,
     description: 'Mic requested (queued or granted)',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'User does not have permission to speak',
   })
   async requestMic(
     @Param('channelId', ParseUUIDPipe) channelId: string,
@@ -101,8 +99,7 @@ export class CommsController {
   /**
    * @description
    * Release the Push-to-Talk microphone.
-   * Marks the current speaker as done and automatically grants the mic
-   * to the next highest-priority person in the queue.
+   * Automatically grants the mic to the next person in the queue.
    */
   @Post(':channelId/radio/release')
   @HttpCode(HttpStatus.OK)
@@ -120,24 +117,28 @@ export class CommsController {
   /**
    * @description
    * Send a text message to the channel.
-   * Saves the message to Postgres and broadcasts it via WebSockets.
+   * Peers must be en_route or on_scene to send.
    */
   @Post(':channelId/messages')
   @ApiOperation({ summary: 'Send a text message to the channel' })
   @ApiParam({ name: 'channelId', description: 'Channel UUID', format: 'uuid' })
   @ApiResponse({ status: 201, description: 'Message sent successfully' })
+  @ApiResponse({
+    status: 403,
+    description: 'User does not have permission to chat',
+  })
   async sendMessage(
     @Param('channelId', ParseUUIDPipe) channelId: string,
     @Body() dto: SendMessageDto,
     @CurrentUser('sub') userId: string,
+    @CurrentUser('role') role: Role,
   ): Promise<CommMessage> {
-    return this.commsService.sendMessage(channelId, userId, dto.content);
+    return this.commsService.sendMessage(channelId, userId, role, dto.content);
   }
 
   /**
    * @description
    * Get the chat history for a channel.
-   * Returns the most recent messages, ordered newest to oldest.
    */
   @Get(':channelId/messages')
   @ApiOperation({ summary: 'Get chat history for a channel' })

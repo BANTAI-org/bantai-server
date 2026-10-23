@@ -1,13 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsUUID, IsString, IsNotEmpty, MaxLength } from 'class-validator';
+import { IsString, IsNotEmpty, MaxLength } from 'class-validator';
 
 export class JoinChannelDto {
-  @ApiProperty({
-    description: 'The incident ID to join the tactical channel for',
-  })
-  @IsUUID()
-  incidentId!: string;
-
   @ApiProperty({
     description: 'The display name (callsign or name)',
     example: 'JOY-0871',
@@ -21,7 +15,7 @@ export class JoinChannelDto {
 export class SendMessageDto {
   @ApiProperty({
     description: 'The text content of the message',
-    example: 'I am 500m away.',
+    example: 'I am 500m away from the incident.',
   })
   @IsString()
   @IsNotEmpty()
