@@ -24,6 +24,7 @@ import { WaveDispatchModule } from '../modules/wave-dispatch/wave-dispatch.modul
 import { DashboardModule } from '../modules/dashboard/dashboard.module';
 import { StorageModule } from '../modules/storage/s3.module';
 import { CommunicationsModule } from '../modules/communications/comms.module';
+import { NotificationsModule } from '../modules/notifications/notifications.module';
 
 /**
  * Filters the generated Swagger document based on allowed roles.
@@ -220,6 +221,13 @@ async function generate(): Promise<void> {
     'Bantai Admin Dashboard API',
     [],
     ['ADMIN', 'SUPER', 'public'],
+  );
+
+  await generateSwaggerDoc(
+    app,
+    'notifications-swagger.json',
+    'bantai responder notification api endpoints',
+    [NotificationsModule],
   );
 
   await app.close();
