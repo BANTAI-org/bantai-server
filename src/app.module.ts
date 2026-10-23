@@ -20,6 +20,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { validate } from './config/env.config';
 import { StorageModule } from './modules/storage/s3.module';
 import { CommunicationsModule } from './modules/communications/comms.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { CommunicationsModule } from './modules/communications/comms.module';
     DashboardModule,
     StorageModule,
     CommunicationsModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

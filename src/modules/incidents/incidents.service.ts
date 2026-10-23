@@ -541,6 +541,20 @@ export class IncidentService {
         reason,
       };
       this.events.emit(IncidentEvents.ESCALATED, escalated);
+
+      /**
+       * Notify the responder who is currently handling the incident
+       * that it has been escalated to a command center.
+       */
+      if (incident.claimed_by_id) {
+        this.events.emit('notification.created', {
+          userId: incident.claimed_by_id,
+          title: 'Dispatch update',
+          body: 'The incident you are handling has been escalated to a command center.',
+          type: 'incident_escalated',
+          relatedEntityId: incidentId,
+        });
+      }
     });
     return id;
   }
@@ -721,6 +735,22 @@ export class IncidentService {
         notes,
       ),
     );
+
+    /**
+     * Emit an event to trigger a push notification, informing the
+     * reporter that their incident report has been approved.
+     */
+    const report = await this.incidentReportRepository.findReportById(reportId);
+    if (report && report.assigned_reporter_id) {
+      this.events.emit('notification.created', {
+        userId: report.assigned_reporter_id,
+        title: 'Report approved',
+        body: 'Your last incident report has been reviewed and accepted.',
+        type: 'report_review_result',
+        relatedEntityId: reportId,
+      });
+    }
+
     await this.announceReport(reportId);
   }
 
@@ -742,6 +772,23 @@ export class IncidentService {
         notes,
       ),
     );
+
+    /**
+     * Emit an event to trigger a push notification, informing the
+     * reporter that their incident report needs revision, including
+     * the admin's feedback.
+     */
+    const report = await this.incidentReportRepository.findReportById(reportId);
+    if (report && report.assigned_reporter_id) {
+      this.events.emit('notification.created', {
+        userId: report.assigned_reporter_id,
+        title: 'Revision requested',
+        body: 'Admin feedback added to your report. Please revise and resubmit.',
+        type: 'report_review_result',
+        relatedEntityId: reportId,
+      });
+    }
+
     await this.announceReport(reportId);
   }
 
