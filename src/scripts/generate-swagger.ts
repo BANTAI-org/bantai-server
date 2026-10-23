@@ -176,6 +176,13 @@ async function generate(): Promise<void> {
     ],
   );
 
+  await generateSwaggerDoc(
+    app,
+    'command-center-swagger.json',
+    'Bantai Command Center API',
+    [CommandCenterModule],
+  );
+
   // 5. ADMIN & SYSTEM TEAM (Audit, SMS, Emails)
   await generateSwaggerDoc(
     app,

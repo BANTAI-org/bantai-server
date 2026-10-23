@@ -1,38 +1,100 @@
-import { IsOptional, IsString, IsInt, Min, Max } from 'class-validator';
-import { Type } from 'class-transformer';
-import { ApiProperty } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import {
+  IsArray,
+  IsEnum,
+  IsISO8601,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+} from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { AuditAction } from '../enums/audit-action.enum';
+
+/**
+ * Accepts repeated params (`?action=X&action=Y`) or comma-separated (`?action=X,Y`).
+ */
+function toArray(value: unknown): unknown {
+  if (value === undefined || value === null) return undefined;
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string') return value;
+
+  return value
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
 
 export class GetAuditLogsQueryDto {
-  @ApiProperty({
-    required: false,
-    description: 'Maximum number of audit logs to return (1-100)',
-    example: 20,
-    minimum: 1,
-    maximum: 100,
+  @ApiPropertyOptional({
+    description: 'Number of records to return',
+    default: 20,
   })
   @IsOptional()
-  @Type(() => Number)
+  @Transform(({ value }) => Number(value))
   @IsInt()
   @Min(1)
-  @Max(100)
   limit?: number = 20;
 
-  @ApiProperty({
-    required: false,
+  @ApiPropertyOptional({
     description: 'Opaque cursor from the previous page',
-    example: 'eyJjcmVhdGVkQXQiOiIyMDI2LTEwLTIzIn0=',
   })
   @IsOptional()
   @IsString()
   cursor?: string;
 
-  @ApiProperty({
-    required: false,
-    description:
-      'Command center UUID filter; required for super administrators',
-    example: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+  @ApiPropertyOptional({
+    description: 'Required for Super Admins. Ignored for Admins.',
   })
   @IsOptional()
-  @IsString()
+  @IsUUID()
   commandCenterId?: string;
+
+  @ApiPropertyOptional({
+    enum: AuditAction,
+    isArray: true,
+    description: 'Filter by one or multiple action types',
+  })
+  @Transform(({ value }) => toArray(value))
+  @IsOptional()
+  @IsArray()
+  @IsEnum(AuditAction, { each: true })
+  action?: AuditAction[];
+
+  @ApiPropertyOptional({
+    isArray: true,
+    description:
+      'Filter by category (maps to target_entity), e.g., "user_account", "incident"',
+  })
+  @Transform(({ value }) => toArray(value))
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  category?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Filter by the user who performed the action',
+  })
+  @IsOptional()
+  @IsUUID()
+  actorId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Inclusive lower bound on created_at. Date-only means 00:00:00.000Z.',
+    example: '2026-10-19',
+  })
+  @IsOptional()
+  @IsISO8601({ strict: false })
+  from?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Inclusive upper bound on created_at. Date-only means 23:59:59.999Z.',
+    example: '2026-10-19',
+  })
+  @IsOptional()
+  @IsISO8601({ strict: false })
+  to?: string;
 }

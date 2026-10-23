@@ -14,6 +14,20 @@ import { GetSingleAuditQueryDto } from './dto/get-single-audit-query.dto';
 import { Role } from '../../common/enums/role-enum';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
 
+/** Anchors date-only bounds to UTC start/end of day. */
+function normalizeBound(
+  value: string | undefined,
+  bound: 'from' | 'to',
+): string | undefined {
+  if (!value) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return bound === 'from'
+      ? `${value}T00:00:00.000Z`
+      : `${value}T23:59:59.999Z`;
+  }
+  return value;
+}
+
 @Injectable()
 export class AuditLogsService {
   private readonly logger = new Logger(AuditLogsService.name);
@@ -40,8 +54,6 @@ export class AuditLogsService {
       query?.createdAt,
     );
 
-    // Same 404 whether the log doesn't exist or belongs to another
-    // command center, so IDs outside the caller's scope can't be probed.
     if (!auditLog) {
       throw new NotFoundException(`Audit log "${auditId}" not found.`);
     }
@@ -58,18 +70,25 @@ export class AuditLogsService {
       query.commandCenterId,
     );
 
+    const from = normalizeBound(query.from, 'from');
+    const to = normalizeBound(query.to, 'to');
+
+    if (from && to && Date.parse(from) > Date.parse(to)) {
+      throw new BadRequestException('from must be <= to');
+    }
+
     return this.auditLogsRepository.getAll({
       commandCenterId,
       limit: query.limit,
       cursor: query.cursor,
+      action: query.action,
+      category: query.category,
+      actorId: query.actorId,
+      from,
+      to,
     });
   }
 
-  /**
-   * Super users have no fixed command center, so it must be supplied in the
-   * request (and is validated). Everyone else is locked to the command center
-   * in their JWT; any value they send in the query is ignored.
-   */
   private async resolveCommandCenterId(
     user: AuthenticatedUser,
     requested?: string,

@@ -25,7 +25,6 @@ export class AuditLogsRepository {
   constructor(private readonly db: DatabaseService) {}
 
   async createAudit(data: CreateAuditLogInput): Promise<SystemAuditLogEntity> {
-    // Lookup actorName from actorId if provided
     let actorName: string | null = null;
     if (data.actorId) {
       const nameResult = await this.db.query<{
@@ -107,8 +106,38 @@ export class AuditLogsRepository {
 
   async getAll(params: GetAuditLogsParams): Promise<PaginatedAuditLogs> {
     const limit = params.limit ?? 20;
-    const values: unknown[] = [params.commandCenterId, limit];
-    let cursorCondition = '';
+
+    // Start with base parameters. $1 is always commandCenterId.
+    // We push the limit to the very end so we don't have to reorder params.
+    const values: unknown[] = [params.commandCenterId];
+    let paramIdx = 2;
+
+    const clauses: string[] = [`command_center_id = $1`];
+
+    if (params.actorId) {
+      clauses.push(`actor_id = $${paramIdx++}`);
+      values.push(params.actorId);
+    }
+
+    if (params.action && params.action.length > 0) {
+      clauses.push(`action = ANY($${paramIdx++}::audit_action[])`);
+      values.push(params.action);
+    }
+
+    if (params.category && params.category.length > 0) {
+      clauses.push(`target_entity = ANY($${paramIdx++}::varchar[])`);
+      values.push(params.category);
+    }
+
+    if (params.from) {
+      clauses.push(`created_at >= $${paramIdx++}::timestamptz`);
+      values.push(params.from);
+    }
+
+    if (params.to) {
+      clauses.push(`created_at <= $${paramIdx++}::timestamptz`);
+      values.push(params.to);
+    }
 
     if (params.cursor) {
       try {
@@ -128,7 +157,10 @@ export class AuditLogsRepository {
 
         const { createdAt, id } = parsed as AuditCursor;
 
-        cursorCondition = `AND (created_at, id) < ($3::timestamptz, $4::uuid)`;
+        // Cursor tuple matching
+        clauses.push(
+          `(created_at, id) < ($${paramIdx++}::timestamptz, $${paramIdx++}::uuid)`,
+        );
         values.push(createdAt, id);
       } catch (error) {
         if (error instanceof BadRequestException) throw error;
@@ -136,13 +168,16 @@ export class AuditLogsRepository {
       }
     }
 
+    // Push limit as the final parameter
+    values.push(limit);
+    const limitIdx = paramIdx;
+
     const sql = `
       SELECT ${this.SELECT_PROJECTION}
       FROM system_audit_log
-      WHERE command_center_id = $1
-      ${cursorCondition}
+      WHERE ${clauses.join('\n        AND ')}
       ORDER BY created_at DESC, id DESC
-      LIMIT $2;
+      LIMIT $${limitIdx};
     `;
 
     const result = await this.db.query<SystemAuditLogEntity>(sql, values);
@@ -166,9 +201,9 @@ export class AuditLogsRepository {
       nextCursor,
     };
   }
+
   async getCommandCenterIdOnId(id: string): Promise<string> {
     const sql = 'SELECT id FROM command_center WHERE id = $1';
-
     const result = await this.db.query<commandCenterId>(sql, [id]);
     return result.rows[0]?.id;
   }

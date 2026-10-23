@@ -1,0 +1,1451 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "AppController_checkHealth",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "API and database are available"
+          },
+          "503": {
+            "description": "Database is unavailable"
+          }
+        },
+        "summary": "Check API and database health",
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/sms/otp/send": {
+      "post": {
+        "operationId": "SmsController_send",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendOtpDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "OTP dispatch accepted"
+          },
+          "400": {
+            "description": "Invalid mobile number"
+          }
+        },
+        "summary": "Send a one-time password by SMS",
+        "tags": [
+          "SMS OTP"
+        ]
+      }
+    },
+    "/sms/otp/verify": {
+      "post": {
+        "operationId": "SmsController_verify",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyOtpDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP verified"
+          },
+          "400": {
+            "description": "Invalid or expired OTP"
+          }
+        },
+        "summary": "Verify a one-time password",
+        "tags": [
+          "SMS OTP"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Bantai Admin Dashboard API",
+    "description": "API Contract for Bantai Admin Dashboard API",
+    "version": "1.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "access-token": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http",
+        "name": "Authorization",
+        "description": "Enter JWT access token",
+        "in": "header"
+      }
+    },
+    "schemas": {
+      "EmailPasswordDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "example": "user@example.com",
+            "description": "User email address"
+          },
+          "password": {
+            "type": "string",
+            "example": "securePassword123",
+            "description": "User password"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ]
+      },
+      "GoogleSsoDto": {
+        "type": "object",
+        "properties": {
+          "idToken": {
+            "type": "string",
+            "example": "eyJhbGciOiJSUzI1NiIs...",
+            "description": "Google ID token from client-side sign-in"
+          }
+        },
+        "required": [
+          "idToken"
+        ]
+      },
+      "ActionTokenPasswordDto": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "example": "a1b2c3d4e5f6...",
+            "description": "Action token from email link (64 hex chars)"
+          },
+          "password": {
+            "type": "string",
+            "example": "newSecurePass123",
+            "description": "New password (10-72 chars)"
+          }
+        },
+        "required": [
+          "token",
+          "password"
+        ]
+      },
+      "CreateCommandCenterDTO": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Command center name",
+            "example": "Central District Command Center"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "barangay",
+              "police_station",
+              "mdrrmo"
+            ],
+            "description": "Type of the command center",
+            "example": "barangay"
+          },
+          "branch": {
+            "type": "string",
+            "description": "Command center branch name",
+            "example": "Central District"
+          },
+          "location": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "latitude": {
+                "type": "number",
+                "description": "Latitude in decimal degrees",
+                "example": 14.676
+              },
+              "longitude": {
+                "type": "number",
+                "description": "Longitude in decimal degrees",
+                "example": 121.0437
+              }
+            },
+            "required": [
+              "latitude",
+              "longitude"
+            ],
+            "description": "Command center geographic coordinates",
+            "example": {
+              "latitude": 14.676,
+              "longitude": 121.0437
+            }
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "branch"
+        ]
+      },
+      "UpdateCommandCenterDTO": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Command center name",
+            "example": "Central District Command Center"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "barangay",
+              "police_station",
+              "mdrrmo"
+            ],
+            "description": "Type of the command center",
+            "example": "barangay"
+          },
+          "branch": {
+            "type": "string",
+            "description": "Command center branch name",
+            "example": "Central District"
+          },
+          "location": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "latitude": {
+                "type": "number",
+                "description": "Latitude in decimal degrees",
+                "example": 14.676
+              },
+              "longitude": {
+                "type": "number",
+                "description": "Longitude in decimal degrees",
+                "example": 121.0437
+              }
+            },
+            "description": "Command center geographic coordinates",
+            "example": {
+              "latitude": 14.676,
+              "longitude": 121.0437
+            }
+          }
+        }
+      },
+      "UpdateResponderEmailDTO": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "New responder email address",
+            "example": "responder@example.com"
+          }
+        },
+        "required": [
+          "email"
+        ]
+      },
+      "CreateResponderDto": {
+        "type": "object",
+        "properties": {
+          "f_name": {
+            "type": "string",
+            "description": "Responder first name",
+            "example": "Ana"
+          },
+          "l_name": {
+            "type": "string",
+            "description": "Responder last name",
+            "example": "Reyes"
+          },
+          "m_name": {
+            "type": "string",
+            "description": "Responder middle name",
+            "example": "Santos"
+          },
+          "email": {
+            "type": "string",
+            "description": "Account email address",
+            "example": "ana.reyes@example.com"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "responder",
+              "admin"
+            ],
+            "description": "Account role (defaults to responder)",
+            "example": "responder"
+          },
+          "agency": {
+            "type": "string",
+            "enum": [
+              "police",
+              "barangay_tanod",
+              "mdrrmo"
+            ],
+            "description": "Responder agency, required for responder accounts",
+            "example": "police"
+          },
+          "call_sign": {
+            "type": "string",
+            "enum": [
+              "PGEN",
+              "PLTGEN",
+              "PMGEN",
+              "PBGEN",
+              "PCOL",
+              "PLTCOL",
+              "PMAJ",
+              "PCPT",
+              "PLT",
+              "PEMS",
+              "PCMS",
+              "PSMS",
+              "PMSg",
+              "PSSg",
+              "PCpl",
+              "Pat",
+              "none"
+            ],
+            "description": "Responder call sign",
+            "example": "ALPHA-12"
+          },
+          "rank": {
+            "type": "string",
+            "description": "Philippine mobile number in E.164 format",
+            "example": "+639171234567"
+          },
+          "command_center_id": {
+            "type": "string",
+            "description": "Command center UUID; required when created by a super administrator",
+            "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          }
+        },
+        "required": [
+          "f_name",
+          "l_name",
+          "email"
+        ]
+      },
+      "PatchResponderProfileDto": {
+        "type": "object",
+        "properties": {
+          "m_number": {
+            "type": "string",
+            "description": "Updated Philippine mobile number in E.164 format",
+            "example": "+639171234567"
+          },
+          "phone_verified_at": {
+            "type": "string",
+            "description": "Phone verification timestamp in ISO 8601 format",
+            "example": "2026-10-23T01:30:00.000Z"
+          }
+        }
+      },
+      "SendOtpDto": {
+        "type": "object",
+        "properties": {
+          "m_number": {
+            "type": "string",
+            "description": "Philippine mobile number in E.164 format",
+            "example": "+639171234567"
+          }
+        },
+        "required": [
+          "m_number"
+        ]
+      },
+      "VerifyOtpDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Driver user UUID",
+            "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          },
+          "email": {
+            "type": "string",
+            "description": "Account email address",
+            "example": "driver@example.com"
+          },
+          "m_number": {
+            "type": "string",
+            "description": "Philippine mobile number in E.164 format",
+            "example": "+639171234567"
+          },
+          "otp_code": {
+            "type": "string",
+            "description": "Six-digit one-time password",
+            "example": "123456"
+          }
+        },
+        "required": [
+          "otp_code"
+        ]
+      },
+      "PasswordResetIdentityDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Driver user UUID",
+            "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          },
+          "email": {
+            "type": "string",
+            "description": "Account email address",
+            "example": "driver@example.com"
+          },
+          "m_number": {
+            "type": "string",
+            "description": "Philippine mobile number in E.164 format",
+            "example": "+639171234567"
+          }
+        }
+      },
+      "ResetPasswordDto": {
+        "type": "object",
+        "properties": {
+          "reset_token": {
+            "type": "string",
+            "description": "Single-use password reset token",
+            "example": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+          },
+          "new_password": {
+            "type": "string",
+            "description": "New password meeting the configured password policy",
+            "example": "StrongPass123!"
+          }
+        },
+        "required": [
+          "reset_token",
+          "new_password"
+        ]
+      },
+      "GoOnDutyDto": {
+        "type": "object",
+        "properties": {
+          "duration_minutes": {
+            "type": "number",
+            "description": "Duty shift duration in minutes; defaults to 720 minutes",
+            "example": 480
+          }
+        }
+      },
+      "UpdateLocationDto": {
+        "type": "object",
+        "properties": {
+          "latitude": {
+            "type": "number",
+            "description": "GPS latitude in degrees",
+            "example": 14.676
+          },
+          "longitude": {
+            "type": "number",
+            "description": "GPS longitude in degrees",
+            "example": 121.0437
+          },
+          "accuracy_meters": {
+            "type": "number",
+            "description": "Reported horizontal GPS accuracy in meters",
+            "example": 8.5
+          }
+        },
+        "required": [
+          "latitude",
+          "longitude"
+        ]
+      },
+      "EmergencyContactDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Emergency contact full name",
+            "example": "Maria Santos"
+          },
+          "relation": {
+            "type": "string",
+            "description": "Relationship to the account holder",
+            "example": "Spouse"
+          },
+          "number": {
+            "type": "string",
+            "description": "Contact mobile number in Philippine E.164 format",
+            "example": "+639171234567"
+          }
+        },
+        "required": [
+          "name",
+          "relation",
+          "number"
+        ]
+      },
+      "CreateDriverDto": {
+        "type": "object",
+        "properties": {
+          "f_name": {
+            "type": "string",
+            "description": "Driver first name",
+            "example": "Juan"
+          },
+          "l_name": {
+            "type": "string",
+            "description": "Driver last name",
+            "example": "Dela Cruz"
+          },
+          "m_name": {
+            "type": "string",
+            "description": "Driver middle name",
+            "example": "Santos"
+          },
+          "date_of_birth": {
+            "type": "string",
+            "description": "Date of birth in YYYY-MM-DD format",
+            "example": "1990-05-20"
+          },
+          "address": {
+            "type": "string",
+            "description": "Residential address",
+            "example": "123 Rizal Street, Quezon City"
+          },
+          "m_number": {
+            "type": "string",
+            "description": "Verified Philippine mobile number in E.164 format",
+            "example": "+639171234567"
+          },
+          "email": {
+            "type": "string",
+            "description": "Account email address",
+            "example": "juan.delacruz@example.com"
+          },
+          "auth_provider": {
+            "type": "string",
+            "enum": [
+              "local",
+              "google",
+              "apple"
+            ],
+            "description": "Authentication provider used for registration",
+            "example": "local"
+          },
+          "password": {
+            "type": "string",
+            "description": "Password required for local authentication",
+            "example": "StrongPass123!"
+          },
+          "social_id_token": {
+            "type": "string",
+            "description": "Fresh provider ID token required for social authentication",
+            "example": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+          },
+          "service_provider": {
+            "type": "string",
+            "enum": [
+              "angkas",
+              "move_it",
+              "joyride",
+              "independent"
+            ],
+            "description": "Driver service provider",
+            "example": "independent"
+          },
+          "service_id": {
+            "type": "string",
+            "description": "Service provider identifier, required unless provider is independent",
+            "example": "TODA-1024"
+          },
+          "license_number": {
+            "type": "string",
+            "description": "Driver license number",
+            "example": "N01-23-456789"
+          },
+          "license_expires_at": {
+            "type": "string",
+            "description": "Driver license expiry date in YYYY-MM-DD format",
+            "example": "2028-08-31"
+          },
+          "years_riding": {
+            "type": "number",
+            "description": "Years of riding experience",
+            "example": 8
+          },
+          "fleet_operator_id": {
+            "type": "string",
+            "description": "Fleet operator identifier, if applicable",
+            "example": "FLEET-204"
+          },
+          "plate_number": {
+            "type": "string",
+            "description": "Vehicle plate number",
+            "example": "ABC1234"
+          },
+          "vehicle_model": {
+            "type": "string",
+            "description": "Vehicle make and model",
+            "example": "Honda Click 150i"
+          },
+          "vehicle_color": {
+            "type": "string",
+            "description": "Vehicle color",
+            "example": "Matte black"
+          },
+          "blood_type": {
+            "type": "string",
+            "enum": [
+              "A+",
+              "A-",
+              "B+",
+              "B-",
+              "AB+",
+              "AB-",
+              "O+",
+              "O-",
+              "unknown"
+            ],
+            "description": "Driver blood type",
+            "example": "O+"
+          },
+          "medical_conditions": {
+            "type": "string",
+            "description": "Known medical conditions; use \"none\" if there are none",
+            "example": "None"
+          },
+          "emergency_contacts": {
+            "description": "One to three emergency contacts",
+            "example": [
+              {
+                "name": "Maria Santos",
+                "relation": "Spouse",
+                "number": "+639171234567"
+              }
+            ],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EmergencyContactDto"
+            }
+          },
+          "data_sharing_consent": {
+            "type": "boolean",
+            "description": "Affirmative data-sharing consent",
+            "example": true
+          }
+        },
+        "required": [
+          "f_name",
+          "l_name",
+          "date_of_birth",
+          "address",
+          "m_number",
+          "email",
+          "auth_provider",
+          "service_provider",
+          "license_number",
+          "license_expires_at",
+          "years_riding",
+          "plate_number",
+          "vehicle_model",
+          "vehicle_color",
+          "blood_type",
+          "medical_conditions",
+          "emergency_contacts",
+          "data_sharing_consent"
+        ]
+      },
+      "PatchDriverProfileDto": {
+        "type": "object",
+        "properties": {
+          "f_name": {
+            "type": "string",
+            "description": "Updated first name",
+            "example": "Juan"
+          },
+          "l_name": {
+            "type": "string",
+            "description": "Updated last name",
+            "example": "Dela Cruz"
+          },
+          "m_name": {
+            "type": "object",
+            "description": "Updated middle name; blank values clear it",
+            "example": "Santos"
+          },
+          "m_number": {
+            "type": "string",
+            "description": "New Philippine mobile number in E.164 format",
+            "example": "+639171234567"
+          },
+          "otp_code": {
+            "type": "string",
+            "description": "Six-digit OTP for verifying a changed mobile number",
+            "example": "123456"
+          },
+          "service_provider": {
+            "type": "string",
+            "enum": [
+              "angkas",
+              "move_it",
+              "joyride",
+              "independent"
+            ],
+            "description": "Updated driver service provider",
+            "example": "independent"
+          },
+          "service_id": {
+            "type": "object",
+            "description": "Updated service provider identifier; null clears it",
+            "example": "TODA-1024"
+          },
+          "plate_number": {
+            "type": "string",
+            "description": "Updated vehicle plate number",
+            "example": "ABC1234"
+          },
+          "blood_type": {
+            "type": "string",
+            "enum": [
+              "A+",
+              "A-",
+              "B+",
+              "B-",
+              "AB+",
+              "AB-",
+              "O+",
+              "O-",
+              "unknown"
+            ],
+            "description": "Updated blood type",
+            "example": "O+"
+          },
+          "address": {
+            "type": "string",
+            "description": "Updated residential address",
+            "example": "123 Rizal Street, Quezon City"
+          },
+          "date_of_birth": {
+            "type": "string",
+            "description": "Updated date of birth in YYYY-MM-DD format",
+            "example": "1990-05-20"
+          },
+          "emergency_contacts": {
+            "description": "Replacement list of emergency contacts",
+            "example": [
+              {
+                "name": "Maria Santos",
+                "relation": "Spouse",
+                "number": "+639171234567"
+              }
+            ],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EmergencyContactDto"
+            }
+          },
+          "license_number": {
+            "type": "string",
+            "description": "Updated driver license number",
+            "example": "N01-23-456789"
+          },
+          "license_expires_at": {
+            "type": "string",
+            "description": "Updated license expiry in YYYY-MM-DD format",
+            "example": "2028-08-31"
+          },
+          "years_riding": {
+            "type": "number",
+            "description": "Updated years of riding experience",
+            "example": 8
+          },
+          "fleet_operator_id": {
+            "type": "object",
+            "description": "Updated fleet operator identifier; null clears it",
+            "example": "FLEET-204"
+          },
+          "vehicle_model": {
+            "type": "string",
+            "description": "Updated vehicle make and model",
+            "example": "Honda Click 150i"
+          },
+          "vehicle_color": {
+            "type": "string",
+            "description": "Updated vehicle color",
+            "example": "Matte black"
+          },
+          "medical_conditions": {
+            "type": "string",
+            "description": "Updated medical conditions",
+            "example": "None"
+          }
+        }
+      },
+      "ChangeDutyDto": {
+        "type": "object",
+        "properties": {
+          "duty_status": {
+            "type": "string",
+            "enum": [
+              "on_duty",
+              "off_duty"
+            ],
+            "description": "Driver duty status",
+            "example": "on_duty"
+          },
+          "shift_hours": {
+            "type": "number",
+            "description": "Shift duration in hours, required when going on duty",
+            "example": 8
+          }
+        },
+        "required": [
+          "duty_status"
+        ]
+      },
+      "LocationDto": {
+        "type": "object",
+        "properties": {
+          "longitude": {
+            "type": "number",
+            "description": "Longitude of the incident location",
+            "example": 121.0437
+          },
+          "latitude": {
+            "type": "number",
+            "description": "Latitude of the incident location",
+            "example": 14.676
+          }
+        },
+        "required": [
+          "longitude",
+          "latitude"
+        ]
+      },
+      "IncidentEvidenceItemDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "R2 object key for the evidence file",
+            "example": "incidents/123/evidence/photo.jpg"
+          },
+          "url": {
+            "type": "string",
+            "description": "Public or signed URL for the evidence file",
+            "example": "https://storage.example.com/evidence/photo.jpg"
+          },
+          "view": {
+            "type": "string",
+            "description": "Evidence camera or image view",
+            "example": "front"
+          },
+          "type": {
+            "type": "string",
+            "description": "Evidence media type",
+            "example": "photo"
+          },
+          "content_type": {
+            "type": "string",
+            "description": "Evidence MIME type",
+            "example": "image/jpeg"
+          },
+          "size_bytes": {
+            "type": "number",
+            "description": "Evidence file size in bytes",
+            "example": 248320
+          },
+          "uploaded_at": {
+            "type": "string",
+            "description": "Evidence upload timestamp in ISO 8601 format",
+            "example": "2026-10-23T01:30:00.000Z"
+          },
+          "duration_s": {
+            "type": "number",
+            "description": "Media duration in seconds",
+            "example": 18.5
+          }
+        }
+      },
+      "CreateIncidentDto": {
+        "type": "object",
+        "properties": {
+          "trigger_source": {
+            "type": "string",
+            "enum": [
+              "EDGE_AI",
+              "MANUAL_SOS",
+              "CENTER_MANUAL",
+              "CRASH_IMU"
+            ],
+            "description": "Source that triggered the incident",
+            "example": "MANUAL_SOS"
+          },
+          "location": {
+            "description": "Geographic location of the incident",
+            "example": {
+              "latitude": 14.676,
+              "longitude": 121.0437
+            },
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LocationDto"
+              }
+            ]
+          },
+          "threat_type": {
+            "type": "string",
+            "enum": [
+              "GUN",
+              "BLADE",
+              "CONFRONTATION",
+              "COLLISION",
+              "PERSON_DOWN",
+              "OTHER"
+            ],
+            "description": "Primary threat type",
+            "example": "CONFRONTATION"
+          },
+          "threat_category": {
+            "type": "string",
+            "enum": [
+              "ASSIST",
+              "DE_ESCALATABLE",
+              "HAZARD"
+            ],
+            "description": "Threat category",
+            "example": "HAZARD"
+          },
+          "confidence_level": {
+            "type": "object",
+            "description": "AI confidence from 0 to 1; required only for EDGE_AI incidents",
+            "example": 0.94
+          },
+          "device_id": {
+            "type": "object",
+            "description": "Source device UUID; required for EDGE_AI incidents",
+            "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          },
+          "driver_id": {
+            "type": "object",
+            "description": "Driver UUID; accepted only for CENTER_MANUAL incidents",
+            "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "UNKNOWN",
+              "MINOR",
+              "SERIOUS",
+              "CRITICAL"
+            ],
+            "description": "Incident severity",
+            "example": "CRITICAL"
+          },
+          "evidence": {
+            "description": "Evidence attached to the incident",
+            "example": [
+              {
+                "key": "incidents/evidence/photo.jpg",
+                "content_type": "image/jpeg"
+              }
+            ],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IncidentEvidenceItemDto"
+            }
+          }
+        },
+        "required": [
+          "trigger_source",
+          "location",
+          "threat_type",
+          "threat_category"
+        ]
+      },
+      "MarkArrivedDto": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "gps",
+              "manual"
+            ],
+            "description": "How arrival was confirmed",
+            "example": "manual"
+          }
+        },
+        "required": [
+          "method"
+        ]
+      },
+      "RecordPeerResponseDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "notified",
+              "acknowledged",
+              "en_route",
+              "on_scene",
+              "stood_down"
+            ],
+            "description": "Peer response status",
+            "example": "acknowledged"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "VerifyIncidentDto": {
+        "type": "object",
+        "properties": {
+          "notes": {
+            "type": "object",
+            "description": "Optional verification notes",
+            "example": "Scene checked; details match the report."
+          }
+        }
+      },
+      "ResolveIncidentDto": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "false_positive",
+              "unresolved"
+            ],
+            "description": "Final incident outcome (cannot be unresolved)",
+            "example": "confirmed"
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      },
+      "UpdateThreatLevelDto": {
+        "type": "object",
+        "properties": {
+          "threat_level": {
+            "type": "string",
+            "enum": [
+              "ACTIVE_THREAT",
+              "DE_ESCALATED",
+              "CLEAR"
+            ],
+            "description": "Updated threat level",
+            "example": "ACTIVE_THREAT"
+          }
+        },
+        "required": [
+          "threat_level"
+        ]
+      },
+      "UpdateSeverityDto": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "UNKNOWN",
+              "MINOR",
+              "SERIOUS",
+              "CRITICAL"
+            ],
+            "description": "Assessed incident severity",
+            "example": "SERIOUS"
+          }
+        },
+        "required": [
+          "severity"
+        ]
+      },
+      "EscalateIncidentDto": {
+        "type": "object",
+        "properties": {
+          "command_center_id": {
+            "type": "string",
+            "description": "UUID of the destination command center",
+            "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "SLA_TIMEOUT",
+              "MANUAL_INTERVENTION"
+            ],
+            "description": "Reason for escalation",
+            "example": "MANUAL_INTERVENTION"
+          },
+          "notes": {
+            "type": "object",
+            "description": "Additional escalation context",
+            "example": "Additional units are required."
+          }
+        },
+        "required": [
+          "command_center_id",
+          "reason"
+        ]
+      },
+      "CreateIncidentReportDto": {
+        "type": "object",
+        "properties": {
+          "incident_id": {
+            "type": "string",
+            "description": "UUID of the incident associated with the report",
+            "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          },
+          "summary": {
+            "type": "string",
+            "description": "Brief incident report summary",
+            "example": "Responder attended a road collision near the intersection."
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "treated_on_scene_refused_transport",
+              "scene_secured_by_police",
+              "vehicle_towed_traffic_cleared",
+              "handled_by_barangay",
+              "false_alarm"
+            ],
+            "description": "Report disposition; required when initially submitted",
+            "example": "false_alarm"
+          },
+          "detailed_narrative": {
+            "type": "object",
+            "description": "Detailed narrative of the incident",
+            "example": "The responder arrived at 14:35 and provided first aid."
+          },
+          "evidence_urls": {
+            "description": "URLs or object keys for report evidence",
+            "example": [
+              "incidents/123/evidence/photo.jpg"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "submitted"
+            ],
+            "description": "Initial report status",
+            "example": "draft"
+          }
+        },
+        "required": [
+          "incident_id",
+          "summary"
+        ]
+      },
+      "UpdateReportDraftDto": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string",
+            "description": "Updated report summary",
+            "example": "Updated summary of the response."
+          },
+          "detailed_narrative": {
+            "type": "object",
+            "description": "Updated detailed narrative",
+            "example": "The responder arrived at 14:35 and provided first aid."
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "treated_on_scene_refused_transport",
+              "scene_secured_by_police",
+              "vehicle_towed_traffic_cleared",
+              "handled_by_barangay",
+              "false_alarm"
+            ],
+            "description": "Updated report disposition",
+            "example": "false_alarm"
+          },
+          "evidence_urls": {
+            "description": "Replacement list of evidence URLs or object keys",
+            "example": [
+              "incidents/123/evidence/photo.jpg"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "SubmitIncidentReportDto": {
+        "type": "object",
+        "properties": {
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "treated_on_scene_refused_transport",
+              "scene_secured_by_police",
+              "vehicle_towed_traffic_cleared",
+              "handled_by_barangay",
+              "false_alarm"
+            ],
+            "description": "Disposition to set before submission if not already recorded",
+            "example": "false_alarm"
+          }
+        }
+      },
+      "ApproveReportDto": {
+        "type": "object",
+        "properties": {
+          "notes": {
+            "type": "object",
+            "description": "Optional reviewer approval notes",
+            "example": "Report reviewed and approved."
+          }
+        }
+      },
+      "RequestReportRevisionDto": {
+        "type": "object",
+        "properties": {
+          "notes": {
+            "type": "string",
+            "description": "Required explanation of requested revisions",
+            "example": "Please include the responding unit and arrival time."
+          }
+        },
+        "required": [
+          "notes"
+        ]
+      },
+      "CreateDeviceDto": {
+        "type": "object",
+        "properties": {
+          "hardwareSerial": {
+            "type": "string",
+            "description": "Unique hardware serial number",
+            "example": "BANTAI-CAM-000123"
+          },
+          "registeredBy": {
+            "type": "string",
+            "description": "UUID of the user registering the device",
+            "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          }
+        },
+        "required": [
+          "hardwareSerial"
+        ]
+      },
+      "PairDeviceDto": {
+        "type": "object",
+        "properties": {
+          "deviceId": {
+            "type": "string",
+            "description": "Device UUID to pair",
+            "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          },
+          "driverId": {
+            "type": "string",
+            "description": "Driver UUID to pair with the device",
+            "example": "7fa85f64-5717-4562-b3fc-2c963f66afa6"
+          }
+        },
+        "required": [
+          "deviceId",
+          "driverId"
+        ]
+      },
+      "RequestUploadUrlDto": {
+        "type": "object",
+        "properties": {
+          "contentType": {
+            "type": "string",
+            "example": "image/jpeg",
+            "description": "The MIME type of the image"
+          },
+          "fileSize": {
+            "type": "number",
+            "example": 102400,
+            "description": "File size in bytes (Max 5MB)"
+          }
+        },
+        "required": [
+          "contentType",
+          "fileSize"
+        ]
+      },
+      "InitiateMultipartDto": {
+        "type": "object",
+        "properties": {
+          "contentType": {
+            "type": "string",
+            "description": "Media MIME type",
+            "example": "video/mp4"
+          },
+          "fileName": {
+            "type": "string",
+            "description": "Original filename of the video",
+            "example": "front_camera.mp4"
+          }
+        },
+        "required": [
+          "contentType",
+          "fileName"
+        ]
+      },
+      "SignPartsDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "R2 object key for the multipart upload",
+            "example": "incidents/123/evidence_video.mp4"
+          },
+          "uploadId": {
+            "type": "string",
+            "description": "Multipart upload ID returned by initiation",
+            "example": "upload-abc123"
+          },
+          "partNumbers": {
+            "description": "Part numbers for which to create signed URLs",
+            "example": [
+              1,
+              2,
+              3
+            ],
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "required": [
+          "key",
+          "uploadId",
+          "partNumbers"
+        ]
+      },
+      "CompleteMultipartPartDto": {
+        "type": "object",
+        "properties": {
+          "ETag": {
+            "type": "string",
+            "description": "ETag returned for this uploaded part",
+            "example": "\"d41d8cd98f00b204e9800998ecf8427e\""
+          },
+          "PartNumber": {
+            "type": "number",
+            "description": "One-based multipart part number",
+            "example": 1
+          }
+        },
+        "required": [
+          "ETag",
+          "PartNumber"
+        ]
+      },
+      "CompleteMultipartDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "R2 object key for the multipart upload",
+            "example": "incidents/123/evidence_video.mp4"
+          },
+          "uploadId": {
+            "type": "string",
+            "description": "Multipart upload ID returned by initiation",
+            "example": "upload-abc123"
+          },
+          "parts": {
+            "description": "Uploaded part numbers and ETags",
+            "example": [
+              {
+                "ETag": "\"d41d8cd98f00b204e9800998ecf8427e\"",
+                "PartNumber": 1
+              }
+            ],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CompleteMultipartPartDto"
+            }
+          }
+        },
+        "required": [
+          "key",
+          "uploadId",
+          "parts"
+        ]
+      },
+      "JoinChannelDto": {
+        "type": "object",
+        "properties": {
+          "incidentId": {
+            "type": "string",
+            "description": "The incident ID to join the tactical channel for"
+          },
+          "displayName": {
+            "type": "string",
+            "description": "The display name (callsign or name)",
+            "example": "JOY-0871"
+          }
+        },
+        "required": [
+          "incidentId",
+          "displayName"
+        ]
+      },
+      "JoinChannelResponseDto": {
+        "type": "object",
+        "properties": {
+          "channelId": {
+            "type": "string",
+            "description": "The internal database channel ID (used as the RealtimeKit meeting ID)"
+          },
+          "authToken": {
+            "type": "string",
+            "description": "The Cloudflare RealtimeKit Auth Token for WebRTC"
+          }
+        },
+        "required": [
+          "channelId",
+          "authToken"
+        ]
+      },
+      "SendMessageDto": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "The text content of the message",
+            "example": "I am 500m away."
+          }
+        },
+        "required": [
+          "content"
+        ]
+      }
+    }
+  }
+}
