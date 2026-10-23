@@ -16,6 +16,7 @@ import type { Request } from 'express';
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/role.decorator';
+import { ApiRoles } from '../../common/decorators/api-roles.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { ResponderService } from './responders.service';
@@ -55,6 +56,7 @@ export class RespondersController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.ADMIN, Role.SUPER)
   async createResponder(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
     dto: CreateResponderDto,
@@ -94,6 +96,7 @@ export class RespondersController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
   async getProfile(@CurrentUser('sub') userId: string) {
     return this.responderService.getProfile(userId);
   }
@@ -106,6 +109,7 @@ export class RespondersController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
   async updateProfile(
     @Body() dto: PatchResponderProfileDto,
     @CurrentUser('sub') userId: string,
@@ -121,6 +125,7 @@ export class RespondersController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
   async requestMnumberOtp(
     @Body() dto: SendOtpDto,
     @CurrentUser('sub') userId: string,
@@ -136,6 +141,7 @@ export class RespondersController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
   async verifyMnumberOtp(
     @Body() dto: VerifyOtpDto,
     @CurrentUser('sub') userId: string,
@@ -191,6 +197,7 @@ export class RespondersController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
   async goOnDuty(
     @Body() dto: GoOnDutyDto,
     @CurrentUser('sub') userId: string,
@@ -205,6 +212,7 @@ export class RespondersController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
   async goOffDuty(
     @CurrentUser('sub') userId: string,
   ): Promise<DutyChangeResponse> {

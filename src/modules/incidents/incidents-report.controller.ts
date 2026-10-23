@@ -14,6 +14,7 @@ import {
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/role.decorator';
+import { ApiRoles } from '../../common/decorators/api-roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { CreateIncidentReportDto } from './dto/create-incident-report.dto';
@@ -58,6 +59,7 @@ export class IncidentReportController {
   @ApiResponse({ status: 400, description: 'Invalid report data' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
   async create(
     @Body() dto: CreateIncidentReportDto,
     @CurrentUser('sub') userId: string,
@@ -75,6 +77,7 @@ export class IncidentReportController {
   @ApiResponse({ status: 200, description: 'Review queue returned' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.ADMIN, Role.SUPER)
   async awaitingReview(
     @Query() query: FindReportsAwaitingReviewQueryDto,
     @CurrentUser('sub') userId: string,
@@ -101,6 +104,7 @@ export class IncidentReportController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Report not found' })
   @Roles(...ANY_USER)
+  @ApiRoles(...ANY_USER)
   getOne(
     @Param() params: ReportIdParamDto,
     @CurrentUser('sub') userId: string,
@@ -124,6 +128,7 @@ export class IncidentReportController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Report not found' })
   @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
   update(
     @Param() params: ReportIdParamDto,
     @Body() dto: UpdateReportDraftDto,
@@ -142,6 +147,7 @@ export class IncidentReportController {
   @ApiResponse({ status: 404, description: 'Report not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
   async submit(
     @Param() params: ReportIdParamDto,
     @Body() dto: SubmitIncidentReportDto,
@@ -162,6 +168,7 @@ export class IncidentReportController {
   @ApiResponse({ status: 404, description: 'Report not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.ADMIN, Role.SUPER)
   async startReview(
     @Param() params: ReportIdParamDto,
     @CurrentUser('sub') userId: string,
@@ -179,6 +186,7 @@ export class IncidentReportController {
   @ApiResponse({ status: 404, description: 'Report not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.ADMIN, Role.SUPER)
   async approve(
     @Param() params: ReportIdParamDto,
     @Body() dto: ApproveReportDto,
@@ -201,6 +209,7 @@ export class IncidentReportController {
   @ApiResponse({ status: 404, description: 'Report not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.ADMIN, Role.SUPER)
   async requestRevision(
     @Param() params: ReportIdParamDto,
     @Body() dto: RequestReportRevisionDto,

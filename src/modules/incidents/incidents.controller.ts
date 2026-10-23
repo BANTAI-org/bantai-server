@@ -15,6 +15,7 @@ import {
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/role.decorator';
+import { ApiRoles } from '../../common/decorators/api-roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { CreateIncidentDto } from './dto/create-incident.dto';
@@ -74,6 +75,7 @@ export class IncidentController {
   @ApiResponse({ status: 400, description: 'Invalid incident data' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.DRIVER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.DRIVER, Role.ADMIN, Role.SUPER)
   async create(
     @Body() dto: CreateIncidentDto,
     @CurrentUser('sub') userId: string,
@@ -122,6 +124,7 @@ export class IncidentController {
   @ApiResponse({ status: 200, description: 'Incident page returned' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.SUPER)
+  @ApiRoles(Role.SUPER)
   async listByStatus(
     @Query() query: FindIncidentsByStatusQueryDto,
   ): Promise<CursorPageResponseDto<IncidentEntity>> {
@@ -137,6 +140,7 @@ export class IncidentController {
   @ApiResponse({ status: 200, description: 'Open incidents returned' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.DRIVER)
+  @ApiRoles(Role.DRIVER)
   async getOpenIncidentsForDriver(
     @CurrentUser('sub') driverId: string,
   ): Promise<IncidentEntity[]> {
@@ -156,6 +160,7 @@ export class IncidentController {
   @ApiResponse({ status: 400, description: 'Missing command center ID' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.ADMIN, Role.SUPER)
   async logs(
     @Query() query: FindIncidentLogsQueryDto,
     @CurrentUser('role') role: Role,
@@ -195,6 +200,7 @@ export class IncidentController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Incident not found' })
   @Roles(...ANY_USER)
+  @ApiRoles(...ANY_USER)
   async getOne(
     @Param() params: IncidentIdParamDto,
     @CurrentUser('sub') userId: string,
@@ -221,6 +227,7 @@ export class IncidentController {
   @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
   async claim(
     @Param() params: IncidentIdParamDto,
     @CurrentUser('sub') userId: string,
@@ -236,6 +243,7 @@ export class IncidentController {
   @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
   async enRoute(
     @Param() params: IncidentIdParamDto,
     @CurrentUser('sub') userId: string,
@@ -254,6 +262,7 @@ export class IncidentController {
   @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
   async arrived(
     @Param() params: IncidentIdParamDto,
     @Body() dto: MarkArrivedDto,
@@ -276,6 +285,7 @@ export class IncidentController {
   @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
   async standDown(
     @Param() params: IncidentIdParamDto,
     @CurrentUser('sub') userId: string,
@@ -298,6 +308,7 @@ export class IncidentController {
   @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.DRIVER)
+  @ApiRoles(Role.DRIVER)
   async peerResponse(
     @Param() params: IncidentIdParamDto,
     @Body() dto: RecordPeerResponseDto,
@@ -322,6 +333,7 @@ export class IncidentController {
   @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
   async requestVerification(
     @Param() params: IncidentIdParamDto,
     @CurrentUser('sub') userId: string,
@@ -339,6 +351,7 @@ export class IncidentController {
   @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
   async verify(
     @Param() params: IncidentIdParamDto,
     @Body() dto: VerifyIncidentDto,
@@ -361,6 +374,7 @@ export class IncidentController {
   @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
   async resolve(
     @Param() params: IncidentIdParamDto,
     @Body() dto: ResolveIncidentDto,
@@ -388,6 +402,7 @@ export class IncidentController {
   @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
   async threatLevel(
     @Param() params: IncidentIdParamDto,
     @Body() dto: UpdateThreatLevelDto,
@@ -413,6 +428,7 @@ export class IncidentController {
   @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
   async severity(
     @Param() params: IncidentIdParamDto,
     @Body() dto: UpdateSeverityDto,
@@ -435,6 +451,7 @@ export class IncidentController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Incident not found' })
   @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
   async escalate(
     @Param() params: IncidentIdParamDto,
     @Body() dto: EscalateIncidentDto,
@@ -461,6 +478,7 @@ export class IncidentController {
   @ApiResponse({ status: 404, description: 'Incident not found' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.DRIVER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.DRIVER, Role.ADMIN, Role.SUPER)
   async cancel(
     @Param() params: IncidentIdParamDto,
     @CurrentUser('sub') userId: string,

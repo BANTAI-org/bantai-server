@@ -18,6 +18,7 @@ import type { FastifyReply } from 'fastify';
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/role.decorator';
+import { ApiRoles } from '../../common/decorators/api-roles.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { AuthTokens } from '../auth/interfaces/auth-token.interface';
 import { RefreshCookieService } from '../auth/helpers/refresh-cookie.help';
@@ -89,6 +90,7 @@ export class DriverController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.DRIVER)
+  @ApiRoles(Role.DRIVER)
   @HttpCode(HttpStatus.OK)
   async updateProfile(
     @Body(new ValidationPipe({ whitelist: true, transform: true }))
@@ -146,6 +148,7 @@ export class DriverController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.DRIVER)
+  @ApiRoles(Role.DRIVER)
   async getDriverUserProfile(
     @CurrentUser('sub') userId: string,
   ): Promise<DriverProfileDataRow | null> {
@@ -162,6 +165,7 @@ export class DriverController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.DRIVER)
+  @ApiRoles(Role.DRIVER)
   async changeDuty(
     @CurrentUser('sub') userId: string,
     @Body() dto: ChangeDutyDto,
@@ -180,6 +184,7 @@ export class DriverController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(Role.DRIVER)
+  @ApiRoles(Role.DRIVER)
   async getResponderDistance(
     @Param('driverId') driverId: string,
     @Param('incidentId') incidentId: string,

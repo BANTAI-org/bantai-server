@@ -12,6 +12,7 @@ import { GetSingleAuditQueryDto } from './dto/get-single-audit-query.dto';
 import { PaginatedAuditLogs } from './interfaces/paginated-audit-logs.interface';
 import { SystemAuditLogEntity } from './interfaces/system-audit-logs-entity.interface';
 import { Roles } from '../../common/decorators/role.decorator';
+import { ApiRoles } from '../../common/decorators/api-roles.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
@@ -44,6 +45,7 @@ export class AuditLogsController {
   @ApiResponse({ status: 200, description: 'Audit log page returned' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.ADMIN, Role.SUPER)
   async getAll(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: GetAuditLogsQueryDto,
@@ -63,6 +65,7 @@ export class AuditLogsController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Audit log not found' })
   @Roles(Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.ADMIN, Role.SUPER)
   async getOne(
     @Param('id', ParseUUIDPipe) auditId: string,
     @Query() query: GetSingleAuditQueryDto,

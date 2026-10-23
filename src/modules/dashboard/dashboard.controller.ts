@@ -6,6 +6,7 @@ import { BadRequestException } from '@nestjs/common';
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/role.decorator';
+import { ApiRoles } from '../../common/decorators/api-roles.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
@@ -42,6 +43,7 @@ export class DashboardController {
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.ADMIN, Role.SUPER)
   async getStats(
     @CurrentUser() user: JwtPayload,
     @Query('commandCenterId') commandCenterId?: string,

@@ -3,7 +3,7 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
-import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { SwaggerModule, DocumentBuilder, OpenAPIObject } from '@nestjs/swagger';
 import * as fs from 'fs';
 
 // Core
@@ -26,6 +26,53 @@ import { StorageModule } from '../modules/storage/s3.module';
 import { CommunicationsModule } from '../modules/communications/comms.module';
 
 /**
+ * Filters the generated Swagger document based on allowed roles.
+ * Public endpoints (no security requirements) are included if 'public' is in the array.
+ */
+function filterSwaggerByRole(
+  document: OpenAPIObject,
+  allowedRoles: string[],
+): OpenAPIObject {
+  const filteredPaths: Record<string, any> = {};
+
+  for (const [path, methods] of Object.entries(document.paths || {})) {
+    const filteredMethods: Record<string, any> = {};
+
+    for (const [method, operation] of Object.entries(
+      methods as Record<string, any>,
+    )) {
+      const op = operation as Record<string, any>;
+
+      // Read the 'x-roles' custom extension we added via @ApiRoles()
+      const endpointRoles: string[] = Array.isArray(op['x-roles'])
+        ? (op['x-roles'] as string[])
+        : [];
+
+      // Safe check for the security array to avoid ESLint "unsafe member access"
+      const securityArray: unknown[] = Array.isArray(op.security)
+        ? op.security
+        : [];
+      const isPublic = securityArray.length === 0;
+
+      // Keep endpoint if it's public and we allow public, OR if it matches a requested role
+      if (
+        (isPublic && allowedRoles.includes('public')) ||
+        endpointRoles.some((role) => allowedRoles.includes(role))
+      ) {
+        filteredMethods[method] = op;
+      }
+    }
+
+    // Only keep the path if it has at least one allowed method
+    if (Object.keys(filteredMethods).length > 0) {
+      filteredPaths[path] = filteredMethods;
+    }
+  }
+
+  return { ...document, paths: filteredPaths };
+}
+
+/**
  * Helper function to generate a Swagger document.
  */
 async function generateSwaggerDoc(
@@ -33,6 +80,7 @@ async function generateSwaggerDoc(
   filename: string,
   title: string,
   modulesToInclude: any[] = [],
+  allowedRoles: string[] = [],
 ): Promise<void> {
   const config = new DocumentBuilder()
     .setTitle(title)
@@ -54,14 +102,28 @@ async function generateSwaggerDoc(
   const options =
     modulesToInclude.length > 0 ? { include: modulesToInclude } : {};
 
-  const document = SwaggerModule.createDocument(app, config, options);
+  // Explicitly type document as OpenAPIObject
+  let document: OpenAPIObject = SwaggerModule.createDocument(
+    app,
+    config,
+    options,
+  );
 
-  // 👇 FIX: Use fs.promises.writeFile (async) instead of writeFileSync
+  // Apply the role filter if specific roles were requested
+  if (allowedRoles.length > 0) {
+    document = filterSwaggerByRole(document, allowedRoles);
+  }
+
+  // Use fs.promises.writeFile (async) instead of writeFileSync
   await fs.promises.writeFile(
     `./${filename}`,
     JSON.stringify(document, null, 2),
   );
-  console.log(`✅ Generated: ${filename}`);
+
+  const roleInfo = allowedRoles.length
+    ? ` (Roles: ${allowedRoles.join(', ')})`
+    : ' (All Roles)';
+  console.log(`Generated: ${filename}${roleInfo}`);
 }
 
 async function generate(): Promise<void> {
@@ -122,8 +184,39 @@ async function generate(): Promise<void> {
     [AuditLogsModule, SmsModule, EmailModule, AuthModule],
   );
 
+  // -------------------------------------------------------------------
+  // 6. ROLE-SPECIFIC APPS (Filtered by @ApiRoles decorator)
+  // -------------------------------------------------------------------
+
+  // Driver Mobile App (Only endpoints for Drivers + Public)
+  await generateSwaggerDoc(
+    app,
+    'driver-app-swagger.json',
+    'Bantai Driver Mobile API',
+    [],
+    ['DRIVER', 'public'],
+  );
+
+  // Responder Mobile App (Only endpoints for Responders + Public)
+  await generateSwaggerDoc(
+    app,
+    'responder-app-swagger.json',
+    'Bantai Responder Mobile API',
+    [],
+    ['RESPONDER', 'public'],
+  );
+
+  // Admin Dashboard (Only endpoints for Admins/Supers + Public)
+  await generateSwaggerDoc(
+    app,
+    'admin-dashboard-swagger.json',
+    'Bantai Admin Dashboard API',
+    [],
+    ['ADMIN', 'SUPER', 'public'],
+  );
+
   await app.close();
-  console.log('🎉 Done generating all Swagger files.');
+  console.log(' Done generating all Swagger files.');
 }
 
 generate().catch((err) => {

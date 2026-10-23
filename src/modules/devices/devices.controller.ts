@@ -14,6 +14,7 @@ import { PairDeviceDto } from './dto/devices.dto';
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/role.decorator';
+import { ApiRoles } from '../../common/decorators/api-roles.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { DeviceStatus } from './enums/device-status.enum';
 import {
@@ -39,6 +40,7 @@ export class DevicesController {
   @ApiResponse({ status: 400, description: 'Invalid device data' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.ADMIN, Role.SUPER)
   async registerDevice(@Body() createDeviceDto: CreateDeviceDto) {
     return this.devicesService.registerDevice({
       hardwareSerial: createDeviceDto.hardwareSerial,
@@ -53,6 +55,7 @@ export class DevicesController {
   @ApiResponse({ status: 400, description: 'Invalid pairing data' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.ADMIN, Role.RESPONDER, Role.DRIVER)
+  @ApiRoles(Role.ADMIN, Role.RESPONDER, Role.DRIVER)
   async pairDevice(@Body() pairDeviceDto: PairDeviceDto) {
     return this.devicesService.pairDevice({
       deviceId: pairDeviceDto.deviceId,
@@ -80,6 +83,7 @@ export class DevicesController {
   @ApiResponse({ status: 400, description: 'Invalid device ID' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.ADMIN, Role.RESPONDER)
+  @ApiRoles(Role.ADMIN, Role.RESPONDER)
   async unpairDevice(
     @Param('deviceId', ParseUUIDPipe)
     deviceId: string,
@@ -109,6 +113,7 @@ export class DevicesController {
   @ApiResponse({ status: 400, description: 'Invalid device ID' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.ADMIN, Role.RESPONDER)
+  @ApiRoles(Role.ADMIN, Role.RESPONDER)
   async reportLostDevice(
     @Param('deviceId', ParseUUIDPipe)
     deviceId: string,
@@ -125,6 +130,7 @@ export class DevicesController {
   @ApiResponse({ status: 400, description: 'Invalid device ID' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.ADMIN, Role.SUPER)
   async decommissionDevice(
     @Param('deviceId', ParseUUIDPipe)
     deviceId: string,
@@ -139,6 +145,7 @@ export class DevicesController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Device not found' })
   @Roles(Role.ADMIN, Role.RESPONDER, Role.DRIVER)
+  @ApiRoles(Role.ADMIN, Role.RESPONDER, Role.DRIVER)
   async getDevice(
     @Param('deviceId', ParseUUIDPipe)
     deviceId: string,
@@ -157,6 +164,7 @@ export class DevicesController {
   @ApiResponse({ status: 400, description: 'Invalid status' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.ADMIN, Role.SUPER)
   async getDevicesByStatus(
     @Param('status', new ParseEnumPipe(DeviceStatus))
     status: DeviceStatus,
@@ -171,6 +179,7 @@ export class DevicesController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Driver not found' })
   @Roles(Role.ADMIN, Role.DRIVER)
+  @ApiRoles(Role.ADMIN, Role.DRIVER)
   async getDevicesByDriver(
     @Param('driverId', ParseUUIDPipe)
     driverId: string,
@@ -185,6 +194,7 @@ export class DevicesController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Device not found' })
   @Roles(Role.DRIVER)
+  @ApiRoles(Role.DRIVER)
   async updateDeviceHeartbeat(
     @Param('deviceId', ParseUUIDPipe)
     deviceId: string,
@@ -199,6 +209,7 @@ export class DevicesController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Device not found' })
   @Roles(Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.ADMIN, Role.SUPER)
   async getDevicePairingHistory(
     @Param('deviceId', ParseUUIDPipe)
     deviceId: string,

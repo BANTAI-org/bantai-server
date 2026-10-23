@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { Roles } from '../../common/decorators/role.decorator';
+import { ApiRoles } from '../../common/decorators/api-roles.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -43,6 +44,7 @@ export class RedisController {
   @ApiResponse({ status: 400, description: 'Invalid location data' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.DRIVER)
+  @ApiRoles(Role.DRIVER)
   @HttpCode(HttpStatus.NO_CONTENT)
   async updateDriver(
     @Body(bodyPipe) dto: UpdateLocationDto,
@@ -63,6 +65,7 @@ export class RedisController {
   @ApiResponse({ status: 400, description: 'Invalid location data' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
   @HttpCode(HttpStatus.NO_CONTENT)
   async updateResponder(
     @Body(bodyPipe) dto: UpdateLocationDto,

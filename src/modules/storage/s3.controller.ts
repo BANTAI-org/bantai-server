@@ -19,6 +19,7 @@ import { S3Service } from './s3.service';
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/role.decorator';
+import { ApiRoles } from '../../common/decorators/api-roles.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ConfigService } from '@nestjs/config';
@@ -42,6 +43,7 @@ export class StorageController {
 
   @Post('profile-image/upload-url')
   @Roles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
   @ApiOperation({ summary: 'Get a presigned URL to upload a profile image' })
   @ApiBody({ type: RequestUploadUrlDto })
   @ApiResponse({
@@ -70,6 +72,7 @@ export class StorageController {
 
   @Post('evidence/multipart/initiate')
   @Roles(Role.DRIVER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.DRIVER, Role.ADMIN, Role.SUPER)
   @ApiOperation({
     summary: 'Step 1: Initiate a multipart upload for large videos',
   })
@@ -106,6 +109,7 @@ export class StorageController {
 
   @Post('evidence/multipart/sign-parts')
   @Roles(Role.DRIVER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.DRIVER, Role.ADMIN, Role.SUPER)
   @ApiOperation({ summary: 'Step 2: Get presigned URLs for the video chunks' })
   @ApiBody({ type: SignPartsDto })
   @ApiResponse({
@@ -129,6 +133,7 @@ export class StorageController {
 
   @Post('evidence/multipart/complete')
   @Roles(Role.DRIVER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.DRIVER, Role.ADMIN, Role.SUPER)
   @ApiOperation({ summary: 'Step 3: Complete the upload by sending the ETags' })
   @ApiBody({ type: CompleteMultipartDto })
   @ApiResponse({
@@ -152,6 +157,7 @@ export class StorageController {
 
   @Get('download-url')
   @Roles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
   @ApiOperation({ summary: 'Get a presigned URL to view an image or video' })
   @ApiQuery({ name: 'key', required: true, description: 'The R2 object key' })
   @ApiQuery({ name: 'bucket', required: true, enum: ['profile', 'evidence'] })
