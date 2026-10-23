@@ -7,6 +7,7 @@ export interface SystemAuditLogEntity<
   actorId: string | null;
   actorName: string | null;
   commandCenterId: string | null;
+  commandCenterName: string | null;
   action: AuditAction;
   targetEntity: string;
   targetId: string;

@@ -9,17 +9,19 @@ import { commandCenterId } from './types/command-center-id.types';
 
 @Injectable()
 export class AuditLogsRepository {
+  // Note: We prefix columns with 'sal' (system_audit_log) to avoid ambiguity with the joined table
   private readonly SELECT_PROJECTION = `
-    id,
-    actor_id AS "actorId",
-    actor_name AS "actorName",
-    command_center_id AS "commandCenterId",
-    action,
-    target_entity AS "targetEntity",
-    target_id AS "targetId",
-    old_payload AS "oldPayload",
-    new_payload AS "newPayload",
-    created_at AS "createdAt"
+    sal.id,
+    sal.actor_id AS "actorId",
+    sal.actor_name AS "actorName",
+    sal.command_center_id AS "commandCenterId",
+    cc.name AS "commandCenterName",
+    sal.action,
+    sal.target_entity AS "targetEntity",
+    sal.target_id AS "targetId",
+    sal.old_payload AS "oldPayload",
+    sal.new_payload AS "newPayload",
+    sal.created_at AS "createdAt"
   `;
 
   constructor(private readonly db: DatabaseService) {}
@@ -39,31 +41,37 @@ export class AuditLogsRepository {
       }
     }
 
+    // Using a CTE to insert, then joining to get the command center name
     const sql = `
-      INSERT INTO system_audit_log (
-        id,
-        actor_id,
-        actor_name,
-        command_center_id,
-        action,
-        target_entity,
-        target_id,
-        old_payload,
-        new_payload,
-        created_at
-      ) VALUES (
-        COALESCE($1::uuid, gen_random_uuid()),
-        $2,
-        $3,
-        $4,
-        $5,
-        $6,
-        $7,
-        $8::jsonb,
-        $9::jsonb,
-        COALESCE($10::timestamptz, now())
+      WITH inserted AS (
+        INSERT INTO system_audit_log (
+          id,
+          actor_id,
+          actor_name,
+          command_center_id,
+          action,
+          target_entity,
+          target_id,
+          old_payload,
+          new_payload,
+          created_at
+        ) VALUES (
+          COALESCE($1::uuid, gen_random_uuid()),
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8::jsonb,
+          $9::jsonb,
+          COALESCE($10::timestamptz, now())
+        )
+        RETURNING *
       )
-      RETURNING ${this.SELECT_PROJECTION};
+      SELECT ${this.SELECT_PROJECTION}
+      FROM inserted sal
+      LEFT JOIN command_center cc ON cc.id = sal.command_center_id;
     `;
 
     const params: (string | null)[] = [
@@ -90,13 +98,14 @@ export class AuditLogsRepository {
   ): Promise<SystemAuditLogEntity | null> {
     let sql = `
       SELECT ${this.SELECT_PROJECTION}
-      FROM system_audit_log
-      WHERE command_center_id = $1 AND id = $2
+      FROM system_audit_log sal
+      LEFT JOIN command_center cc ON cc.id = sal.command_center_id
+      WHERE sal.command_center_id = $1 AND sal.id = $2
     `;
     const params: (string | Date)[] = [commandCenterId, id];
 
     if (createdAt) {
-      sql += ` AND created_at = $3`;
+      sql += ` AND sal.created_at = $3`;
       params.push(createdAt);
     }
 
@@ -106,36 +115,34 @@ export class AuditLogsRepository {
 
   async getAll(params: GetAuditLogsParams): Promise<PaginatedAuditLogs> {
     const limit = params.limit ?? 20;
-
-    // Start with base parameters. $1 is always commandCenterId.
-    // We push the limit to the very end so we don't have to reorder params.
     const values: unknown[] = [params.commandCenterId];
     let paramIdx = 2;
 
-    const clauses: string[] = [`command_center_id = $1`];
+    // Prefix all columns with 'sal.' so they don't conflict with command_center columns
+    const clauses: string[] = [`sal.command_center_id = $1`];
 
     if (params.actorId) {
-      clauses.push(`actor_id = $${paramIdx++}`);
+      clauses.push(`sal.actor_id = $${paramIdx++}`);
       values.push(params.actorId);
     }
 
     if (params.action && params.action.length > 0) {
-      clauses.push(`action = ANY($${paramIdx++}::audit_action[])`);
+      clauses.push(`sal.action = ANY($${paramIdx++}::audit_action[])`);
       values.push(params.action);
     }
 
     if (params.category && params.category.length > 0) {
-      clauses.push(`target_entity = ANY($${paramIdx++}::varchar[])`);
+      clauses.push(`sal.target_entity = ANY($${paramIdx++}::varchar[])`);
       values.push(params.category);
     }
 
     if (params.from) {
-      clauses.push(`created_at >= $${paramIdx++}::timestamptz`);
+      clauses.push(`sal.created_at >= $${paramIdx++}::timestamptz`);
       values.push(params.from);
     }
 
     if (params.to) {
-      clauses.push(`created_at <= $${paramIdx++}::timestamptz`);
+      clauses.push(`sal.created_at <= $${paramIdx++}::timestamptz`);
       values.push(params.to);
     }
 
@@ -159,7 +166,7 @@ export class AuditLogsRepository {
 
         // Cursor tuple matching
         clauses.push(
-          `(created_at, id) < ($${paramIdx++}::timestamptz, $${paramIdx++}::uuid)`,
+          `(sal.created_at, sal.id) < ($${paramIdx++}::timestamptz, $${paramIdx++}::uuid)`,
         );
         values.push(createdAt, id);
       } catch (error) {
@@ -168,15 +175,15 @@ export class AuditLogsRepository {
       }
     }
 
-    // Push limit as the final parameter
     values.push(limit);
     const limitIdx = paramIdx;
 
     const sql = `
       SELECT ${this.SELECT_PROJECTION}
-      FROM system_audit_log
+      FROM system_audit_log sal
+      LEFT JOIN command_center cc ON cc.id = sal.command_center_id
       WHERE ${clauses.join('\n        AND ')}
-      ORDER BY created_at DESC, id DESC
+      ORDER BY sal.created_at DESC, sal.id DESC
       LIMIT $${limitIdx};
     `;
 

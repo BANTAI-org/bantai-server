@@ -23,6 +23,7 @@ export interface ResponderProfileRow {
   role: Role;
   command_center_id: string | null;
   m_number: string | null;
+  command_center_name: string | null;
   phone_verified_at: Date | null;
 }
 
@@ -233,7 +234,7 @@ export class ResponderRepository {
 
   /**
    * Fetches the user profile for the given user ID.
-   * Returns the user account details (including role) for any role.
+   * Returns the user account details (including role and command center name).
    * Returns null if no user exists or if the user is soft-deleted.
    */
   async findProfileById(userId: string): Promise<ResponderProfileRow | null> {
@@ -247,8 +248,10 @@ export class ResponderRepository {
         u.role,
         u.command_center_id,
         u.m_number,
+        cc.name AS command_center_name,
         u.phone_verified_at
       FROM user_account u
+      LEFT JOIN command_center cc ON cc.id = u.command_center_id
       WHERE u.id = $1
         AND u.deleted_at IS NULL
     `;
