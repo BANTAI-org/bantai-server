@@ -4,11 +4,11 @@ import {
   ForbiddenException,
   Get,
   Post,
+  Patch,
   Req,
   UseGuards,
   ValidationPipe,
   BadRequestException,
-  Patch,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -19,6 +19,7 @@ import { Roles } from '../../common/decorators/role.decorator';
 import { ApiRoles } from '../../common/decorators/api-roles.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { AuthTokens } from '../auth/interfaces/auth-token.interface';
 import { ResponderService } from './responders.service';
 import { CreateResponderDto } from './dto/create-responder.dto';
 import { PatchResponderProfileDto } from './dto/patch-responder-profile.dto';
@@ -32,6 +33,7 @@ import { UserIdType } from './types/user-id.types';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { GoOnDutyDto } from './dto/go-on-duty.dto';
 import { DutyChangeResponse } from './responders.service';
+import { ChangePassAndIssueNewRefreshTokenDTO } from './dto/change-pass-and-new-refresh.dto';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -115,6 +117,49 @@ export class RespondersController {
     @CurrentUser('sub') userId: string,
   ) {
     return this.responderService.updateProfile(userId, dto);
+  }
+
+  @Patch('change-password')
+  @ApiOperation({
+    summary: 'Change the authenticated account password and issue new tokens',
+    description:
+      'Verifies the current password, hashes and stores the new one, then ' +
+      'issues a fresh access/refresh pair. For non-SUPER accounts all of the ' +
+      "user's other sessions are invalidated as part of the new session — " +
+      'every other device must sign in again.',
+  })
+  @ApiBody({ type: ChangePassAndIssueNewRefreshTokenDTO })
+  @ApiResponse({
+    status: 200,
+    description: 'Password changed; new access and refresh tokens issued',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'New password violates policy, or equals the current one',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized, or current password is incorrect',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'dto.id does not match the authenticated account',
+  })
+  @ApiResponse({ status: 404, description: 'Responder account not found' })
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.RESPONDER, Role.ADMIN, Role.SUPER)
+  async changePassword(
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    dto: ChangePassAndIssueNewRefreshTokenDTO,
+    @CurrentUser('sub') userId: string,
+  ): Promise<AuthTokens> {
+    return this.responderService.changePassword(
+      userId,
+      dto.old_password,
+      dto.new_password,
+    );
   }
 
   @Post('request-mnumber-otp')

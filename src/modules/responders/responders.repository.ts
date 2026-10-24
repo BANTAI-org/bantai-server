@@ -237,6 +237,21 @@ export class ResponderRepository {
     return { status: 'INVALID_STATE', availability: row.availability };
   }
 
+  async getPasswordHash(id: string): Promise<string | null> {
+    const sql = 'SELECT password_hash FROM user_account WHERE id = $1';
+    const result = await this.db.query<{ password_hash: string | null }>(sql, [
+      id,
+    ]);
+
+    return result.rows[0]?.password_hash ?? null;
+  }
+
+  async updatePassword(id: string, new_password: string): Promise<boolean> {
+    const sql = 'UPDATE user_account SET password_hash = $1 WHERE id = $2';
+    const result = await this.db.query(sql, [new_password, id]);
+    return result.rowCount === 1;
+  }
+
   /**
    * Fetches the user profile for the given user ID.
    * Returns the user account details (including role and command center name).

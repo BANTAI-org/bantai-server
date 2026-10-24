@@ -53,7 +53,6 @@ export class RedisController {
     @Body(bodyPipe) dto: UpdateLocationDto,
     @CurrentUser('sub') driverId: string,
   ): Promise<void> {
-
     await this.redisService.update(
       driverId,
       'driver',
@@ -75,7 +74,6 @@ export class RedisController {
     @Body(bodyPipe) dto: UpdateLocationDto,
     @CurrentUser('sub') responderId: string,
   ): Promise<void> {
-
     await this.redisService.update(
       responderId,
       'responder',

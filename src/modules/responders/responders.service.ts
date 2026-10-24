@@ -7,6 +7,7 @@ import {
   Logger,
   NotFoundException,
   ServiceUnavailableException,
+  UnauthorizedException,
   Inject,
 } from '@nestjs/common';
 import {
@@ -14,7 +15,6 @@ import {
   type ResponderAccountPatch,
   ResponderPasswordTarget,
   ResponderResetIdentity,
-  // PASSWORD_RESET_LOOKUP,
 } from './responders.repository';
 import { AuthService } from '../auth/auth.service';
 import { Role } from '../../common/enums/role-enum';
@@ -44,10 +44,6 @@ import {
   EmailOtpService,
 } from '../email/email-otp.service';
 import { REDIS_CLIENT } from '../redis/provider/redis.provider';
-import {} from // SOCIAL_IDENTITY_VERIFIERS,
-// type SocialIdentityVerifiers,
-'./types/social-identity-provider.type';
-// import { isPastDate } = './util/is-past-date.util';
 import { isPgError } from './util/pg-error.util';
 import { OtpChannel } from './types/otp-channel.type';
 import {
@@ -65,8 +61,7 @@ import {
   RESET_TOKEN_TTL_SECONDS,
   RESET_SESSION_EXPIRED_MESSAGE,
 } from './util/otp-policey.util';
-
-// const PG_UNIQUE_VIOLATION = '23505';
+import { AuthTokens } from '../auth/interfaces/auth-token.interface';
 
 /** No timer chosen -> a 12 h shift, so the geofenced "off duty" can never strand anyone. */
 const DEFAULT_SHIFT_MINUTES = 12 * 60;
@@ -828,5 +823,77 @@ export class ResponderService {
       error instanceof Error ? error.stack : undefined,
     );
     throw new InternalServerErrorException();
+  }
+
+  /**
+   * Changes the password of the authenticated account and issues a fresh
+   * token pair.
+   *
+   * Every id used here — password update, session revocation, and token
+   * signing — comes from `userId` (the JWT subject). No refresh-token
+   * lookup is performed, so the caller cannot end up with tokens that
+   * belong to a different account than the one whose password was changed.
+   *
+   * Ordering matters:
+   *   1. Read the current password hash and verify `oldPassword` against it.
+   *   2. Fetch the profile. Rejects a soft-deleted account before anything
+   *      is written, and supplies role + command_center_id for signing.
+   *   3. Hash and store the new password.
+   *   4. `generateTokens` -> `createSession` deletes every existing session
+   *      for this user (non-SUPER) and inserts the rotated one, so this
+   *      device stays signed in and every other device is signed out.
+   */
+  async changePassword(
+    userId: string,
+    oldPassword: string,
+    newPassword: string,
+  ): Promise<AuthTokens> {
+    const currentPasswordHash =
+      await this.responderRepository.getPasswordHash(userId);
+
+    if (!currentPasswordHash) {
+      throw new UnauthorizedException(
+        'This account has no password set. Use the password-reset flow instead.',
+      );
+    }
+
+    const isMatch = await bcrypt.compare(oldPassword, currentPasswordHash);
+    if (!isMatch) {
+      this.logger.warn(
+        `Rejected password change for ${userId}: current password is incorrect`,
+      );
+      throw new UnauthorizedException('Current password is incorrect.');
+    }
+
+    if (oldPassword === newPassword) {
+      throw new BadRequestException(
+        'New password must be different from the current one.',
+      );
+    }
+
+    // Fetch before writing: rejects a soft-deleted account (findProfileById
+    // filters deleted_at IS NULL) and yields role/command_center_id for
+    // signing the new tokens.
+    const profile = await this.responderRepository.findProfileById(userId);
+    if (!profile) {
+      throw new NotFoundException('Responder account not found.');
+    }
+
+    // updatePassword() writes straight into password_hash — hash here.
+    const newPasswordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    const isUpdated = await this.responderRepository.updatePassword(
+      userId,
+      newPasswordHash,
+    );
+
+    if (!isUpdated) {
+      throw new NotFoundException('Responder account not found.');
+    }
+
+    return this.authService.generateTokens(
+      userId,
+      profile.role,
+      profile.command_center_id,
+    );
   }
 }
