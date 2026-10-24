@@ -53,19 +53,6 @@ export class RedisController {
     @Body(bodyPipe) dto: UpdateLocationDto,
     @CurrentUser('sub') driverId: string,
   ): Promise<void> {
-    const { rows } = await this.db.query<{ duty_status: string }>(
-      `SELECT p.duty_status 
-         FROM d_profile p
-         JOIN user_account u ON u.id = p.user_id
-        WHERE p.user_id = $1::uuid 
-          AND u.deleted_at IS NULL 
-          AND u.account_status = 'active'`,
-      [driverId],
-    );
-
-    if (rows[0]?.duty_status !== 'on_duty') {
-      return;
-    }
 
     await this.redisService.update(
       driverId,
@@ -88,19 +75,6 @@ export class RedisController {
     @Body(bodyPipe) dto: UpdateLocationDto,
     @CurrentUser('sub') responderId: string,
   ): Promise<void> {
-    const { rows } = await this.db.query<{ availability: string }>(
-      `SELECT p.availability 
-         FROM r_profile p
-         JOIN user_account u ON u.id = p.user_id
-        WHERE p.user_id = $1::uuid 
-          AND u.deleted_at IS NULL 
-          AND u.account_status = 'active'`,
-      [responderId],
-    );
-
-    if (rows[0]?.availability !== 'on_duty') {
-      return;
-    }
 
     await this.redisService.update(
       responderId,
