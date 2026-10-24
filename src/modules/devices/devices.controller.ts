@@ -59,6 +59,7 @@ export class DevicesController {
   async pairDevice(@Body() pairDeviceDto: PairDeviceDto) {
     return this.devicesService.pairDevice({
       deviceId: pairDeviceDto.deviceId,
+      hardwareSerial: pairDeviceDto.hardwareSerial,
       driverId: pairDeviceDto.driverId,
     });
   }

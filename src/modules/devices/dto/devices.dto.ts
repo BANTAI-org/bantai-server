@@ -1,4 +1,10 @@
-import { IsString, IsNotEmpty, MaxLength, IsOptional } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  MaxLength,
+  IsOptional,
+  ValidateIf,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateDeviceDto {
@@ -23,12 +29,27 @@ export class CreateDeviceDto {
 
 export class PairDeviceDto {
   @ApiProperty({
-    description: 'Device UUID to pair',
+    required: false,
+    description:
+      'Device UUID to pair. Provide either this or hardwareSerial — at least one is required.',
     example: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
   })
+  @ValidateIf((o: PairDeviceDto) => !o.hardwareSerial)
   @IsString()
   @IsNotEmpty()
-  deviceId!: string;
+  deviceId?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Hardware serial scanned from the QR sticker. Provide either this or deviceId — at least one is required.',
+    example: 'BANTAI-CAM-000123',
+  })
+  @ValidateIf((o: PairDeviceDto) => !o.deviceId)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  hardwareSerial?: string;
 
   @ApiProperty({
     description: 'Driver UUID to pair with the device',

@@ -6,7 +6,6 @@ import { DevicesRepository } from './devices.repository';
 import { CreateNewDeviceData } from './types/create-new-device.type';
 import { DeviceEntity } from './interfaces/device-entity.interface';
 import { DeviceStatus } from './enums/device-status.enum';
-import { DevicePairing } from './types/device-pairing.types';
 
 @Injectable()
 export class DevicesService {
@@ -16,9 +15,12 @@ export class DevicesService {
     return this.devicesRepository.registerNewDevice(data);
   }
 
-  async pairDevice(
-    data: Omit<DevicePairing, 'pairedBy'> & { pairedBy?: string },
-  ): Promise<DeviceEntity> {
+  async pairDevice(data: {
+    deviceId?: string;
+    hardwareSerial?: string;
+    driverId: string;
+    pairedBy?: string;
+  }): Promise<DeviceEntity> {
     return this.devicesRepository.pairDevice(data);
   }
 
@@ -38,7 +40,6 @@ export class DevicesService {
       );
     }
 
-    // Update device to inventory status and set unpaired timestamp
     const updatedDevice = await this.devicesRepository.updateDevice(deviceId, {
       status: DeviceStatus.INVENTORY,
       driverId: null,
@@ -46,7 +47,6 @@ export class DevicesService {
       unpairedAt: new Date().toISOString(),
     });
 
-    // Write unpair record to device_pairing_history
     void unpairedBy;
     await this.devicesRepository.addDevicePairingHistory(
       deviceId,
@@ -70,7 +70,6 @@ export class DevicesService {
       throw new NotFoundException(`Device with ID ${deviceId} not found`);
     }
 
-    // Check if device can be reported lost (only from inventory or paired status)
     if (
       device.status === DeviceStatus.REPORTED_LOST ||
       device.status === DeviceStatus.DECOMMISSIONED
@@ -82,7 +81,6 @@ export class DevicesService {
 
     void reportedBy;
 
-    // Update device status to reported_lost
     const updatedDevice = await this.devicesRepository.updateDevice(deviceId, {
       status: DeviceStatus.REPORTED_LOST,
     });
@@ -101,11 +99,9 @@ export class DevicesService {
       throw new BadRequestException('Device is already decommissioned');
     }
 
-    // Store current values for history record
     const currentDriverId = device.driverId;
     const currentPairedAt = device.pairedAt;
 
-    // Update device to decommissioned status
     const updatedDevice = await this.devicesRepository.updateDevice(deviceId, {
       status: DeviceStatus.DECOMMISSIONED,
       driverId: null,
@@ -113,12 +109,11 @@ export class DevicesService {
       unpairedAt: new Date().toISOString(),
     });
 
-    // Write final unpair record if device was paired
     if (currentDriverId && currentPairedAt) {
       await this.devicesRepository.addDevicePairingHistory(
         deviceId,
         currentDriverId,
-        null, // decommissioned by system
+        null,
         new Date(currentPairedAt ?? new Date().toISOString()),
         new Date(),
         'decommissioned',

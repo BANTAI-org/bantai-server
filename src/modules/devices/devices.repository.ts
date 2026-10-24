@@ -3,7 +3,11 @@ import { DeviceStatus } from './enums/device-status.enum';
 import { CreateNewDeviceData } from './types/create-new-device.type';
 import { DeviceEntity } from './interfaces/device-entity.interface';
 import { DevicePairingHistoryEntity } from './interfaces/device-pairing-history-entity.interface';
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 
 interface DeviceRow {
   id: string;
@@ -63,12 +67,41 @@ export class DevicesRepository {
     return mapDeviceRow(result.rows[0]);
   }
 
+  async getDeviceIdByHardwareSerial(
+    hardwareSerial: string,
+  ): Promise<string | null> {
+    const result = await this.db.query<{ id: string }>(
+      `SELECT id FROM device WHERE hardware_serial = $1 LIMIT 1`,
+      [hardwareSerial],
+    );
+    return result.rows[0]?.id ?? null;
+  }
+
   async pairDevice(data: {
-    deviceId: string;
+    deviceId?: string;
+    hardwareSerial?: string;
     driverId: string;
     pairedBy?: string;
   }) {
-    const { deviceId, driverId, pairedBy } = data;
+    const { driverId, pairedBy } = data;
+
+    let deviceId = data.deviceId;
+    if (!deviceId) {
+      if (!data.hardwareSerial) {
+        throw new BadRequestException(
+          'pairDevice requires either deviceId or hardwareSerial',
+        );
+      }
+      const resolved = await this.getDeviceIdByHardwareSerial(
+        data.hardwareSerial,
+      );
+      if (!resolved) {
+        throw new NotFoundException(
+          `No device with hardware serial ${data.hardwareSerial}`,
+        );
+      }
+      deviceId = resolved;
+    }
 
     return this.db.withTransaction(async (client) => {
       const updateDeviceSql = `
@@ -88,13 +121,12 @@ export class DevicesRepository {
 
       const deviceRow = deviceResult.rows[0];
       if (!deviceRow) {
-        throw new Error(
+        throw new NotFoundException(
           'Device not found or is not currently in inventory status.',
         );
       }
       const device = mapDeviceRow(deviceRow);
 
-      // 2. Write immutable audit record to device_pairing_history[cite: 1]
       const insertHistorySql = `
         INSERT INTO device_pairing_history (device_id, driver_id, paired_by, paired_at)
         VALUES ($1, $2, $3, $4)
@@ -200,7 +232,7 @@ export class DevicesRepository {
       throw new Error('No fields to update');
     }
 
-    values.push(deviceId); // for deviceId in WHERE clause
+    values.push(deviceId);
 
     const sql = `
       UPDATE device
