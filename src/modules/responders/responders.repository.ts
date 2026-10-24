@@ -8,6 +8,8 @@ import { CreateResponderProfileData } from './types/create-responder-profile.typ
 import { AccountStatusEnum } from '../auth/enums/account-status.enum';
 import { DutyChangeResult } from './types/duty-change-result';
 import { AvailabilityStatusEnum } from './enums/availability-status.enum';
+import { AgencyTypeEnum } from './enums/agency-type.enum';
+import { PoliceRank } from './enums/police-rank.enum';
 
 export interface ResponderAccountPatch {
   m_number?: string;
@@ -25,6 +27,9 @@ export interface ResponderProfileRow {
   m_number: string | null;
   command_center_name: string | null;
   phone_verified_at: Date | null;
+  agency: AgencyTypeEnum | null;
+  call_sign: string | null;
+  rank: PoliceRank | null;
 }
 
 /** A responder may only go on/off duty within this distance of their command center. */
@@ -239,22 +244,26 @@ export class ResponderRepository {
    */
   async findProfileById(userId: string): Promise<ResponderProfileRow | null> {
     const PROFILE_SELECT_SQL = `
-      SELECT
-        u.id,
-        u.f_name,
-        u.l_name,
-        u.m_name,
-        u.email,
-        u.role,
-        u.command_center_id,
-        u.m_number,
-        cc.name AS command_center_name,
-        u.phone_verified_at
-      FROM user_account u
-      LEFT JOIN command_center cc ON cc.id = u.command_center_id
-      WHERE u.id = $1
-        AND u.deleted_at IS NULL
-    `;
+    SELECT
+      u.id,
+      u.f_name,
+      u.l_name,
+      u.m_name,
+      u.email,
+      u.role,
+      u.command_center_id,
+      u.m_number,
+      cc.name AS command_center_name,
+      u.phone_verified_at,
+      p.agency,
+      p.call_sign,
+      p.rank
+    FROM user_account u
+    LEFT JOIN command_center cc ON cc.id = u.command_center_id
+    LEFT JOIN r_profile p ON p.user_id = u.id
+    WHERE u.id = $1
+      AND u.deleted_at IS NULL
+  `;
 
     const { rows } = await this.db.query<ResponderProfileRow>(
       PROFILE_SELECT_SQL,
