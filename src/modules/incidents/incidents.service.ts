@@ -7,7 +7,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { CreateIncidentDto } from './dto/create-incident.dto';
 import { CreateIncidentReportDto } from './dto/create-incident-report.dto';
 import { FindReportsAwaitingReviewQueryDto } from './dto/find-reports-awaiting-review.dto';
@@ -56,7 +56,6 @@ import {
 } from '../../common/utils/cursor-pagination-helper.util';
 import { Role } from '../../common/enums/role-enum';
 
-/** The authenticated caller, taken from the verified token, never the body. */
 export interface ServiceActor {
   id: string;
   role: Role;
@@ -73,31 +72,10 @@ export class IncidentService {
     private readonly events: EventEmitter2,
   ) {}
 
-  // =====================================================================
-  // CREATE
-  // =====================================================================
-
-  /**
-   * Creates an incident and announces it. Returns the new incident's id.
-   *
-   * `resolvedDriverId` is the rider the caller already established: the
-   * authenticated rider for MANUAL_SOS, or the device's paired rider for
-   * EDGE_AI. It is NOT taken from the request body. dto.driver_id is honoured
-   * only for CENTER_MANUAL, where a command center may link a registered rider.
-   *
-   * The rider's own severity self-report is accepted here (it is what lets
-   * nearby riders help on a MINOR incident); only staff can change it later,
-   * see updateSeverity. The repository starts an ASSIST incident CLEAR and
-   * everything else ACTIVE_THREAT.
-   */
   async createIncident(
     dto: CreateIncidentDto,
     resolvedDriverId: string | null,
   ): Promise<string> {
-    // The DTO checks these for HTTP callers. They are repeated here because
-    // the service is also called from places that skip DTO validation (the
-    // edge pipeline, the SLA sweeper, tests), and the database is the last
-    // line of defence, not the first.
     const isWeapon =
       dto.threat_type === ThreatType.GUN ||
       dto.threat_type === ThreatType.BLADE;
@@ -131,7 +109,6 @@ export class IncidentService {
       ? (dto.driver_id ?? null)
       : resolvedDriverId;
 
-    // chck_incident_driver_required: only CENTER_MANUAL may have no rider.
     if (!isCenterManual && driverId === null) {
       throw new BadRequestException(
         'Could not determine which rider this incident belongs to',
@@ -152,7 +129,6 @@ export class IncidentService {
         evidence: toIncidentEvidenceItems(dto.evidence),
       });
     } catch (error) {
-      // An unknown device, or a rider that no longer exists (a stale pairing).
       if (isPgError(error, '23503')) {
         throw new BadRequestException('Unknown device or rider');
       }
@@ -163,8 +139,6 @@ export class IncidentService {
       throw new InternalServerErrorException('Incident could not be created');
     }
 
-    // After the write has succeeded, never before. Listener failures are
-    // logged by the event emitter and do not fail this request.
     const event: IncidentCreatedEvent = {
       incidentId,
       triggerSource: dto.trigger_source,
@@ -182,11 +156,6 @@ export class IncidentService {
     return incidentId;
   }
 
-  // =====================================================================
-  // RESPONDER PROGRESS (each one announces the new status)
-  // =====================================================================
-
-  /** A responder claims an offered incident. Exactly one claimant can win. */
   async claimIncident(incidentId: string, responderId: string): Promise<void> {
     let won: boolean;
     try {
@@ -195,13 +164,9 @@ export class IncidentService {
         responderId,
       );
     } catch (error) {
-      // Closed or cancelled incidents raise a check_violation.
       if (isPgError(error, '23514')) {
         throw new ConflictException('This incident is already closed');
       }
-      // Two responders claiming at the same instant: the loser can be killed
-      // by a deadlock (40P01, seen in ~7% of simulated races) or hit the
-      // one-active-claim index (23505). Either way someone else won.
       if (isPgError(error, '40P01') || isPgError(error, '23505')) {
         throw new ConflictException(
           'This incident was already claimed, or the offer is no longer open',
@@ -234,10 +199,6 @@ export class IncidentService {
     return this.incidentRepository.findOpenIncidentsByDriver(driverId);
   }
 
-  /**
-   * `confirmedById` is the authenticated user who confirmed the arrival, for
-   * method 'manual'; pass null for 'gps'. Never accept it from the client.
-   */
   async markArrived(
     incidentId: string,
     responderId: string,
@@ -258,7 +219,6 @@ export class IncidentService {
     await this.announceStatus(incidentId);
   }
 
-  /** The claimant walks away before arriving; the incident returns to dispatch. */
   async standDown(incidentId: string, responderId: string): Promise<void> {
     const ok = await this.incidentRepository.standDown(incidentId, responderId);
     if (!ok) {
@@ -269,17 +229,6 @@ export class IncidentService {
     await this.announceStatus(incidentId);
   }
 
-  // =====================================================================
-  // PEERS
-  // =====================================================================
-
-  /**
-   * A nearby rider responds to an alert. Every nearby rider is alerted, but
-   * only a rider who may safely help can head to the scene (see
-   * isPeerHelpEligible); acknowledging the alert or standing down is always
-   * allowed. If the incident later stops being eligible, the peers already
-   * heading there are stood down (see updateSeverity / updateThreatLevel).
-   */
   async recordPeerResponse(
     incidentId: string,
     peerDriverId: string,
@@ -320,11 +269,6 @@ export class IncidentService {
     });
   }
 
-  // =====================================================================
-  // INCIDENT-LEVEL TRANSITIONS
-  // =====================================================================
-
-  /** The claimant asks for independent (four-eyes) verification. */
   async requestVerification(
     incidentId: string,
     responderId: string,
@@ -341,7 +285,6 @@ export class IncidentService {
     await this.announceStatus(incidentId);
   }
 
-  /** A second person verifies the scene outcome. Does not resolve it. */
   async verifyIncident(
     incidentId: string,
     verifierId: string,
@@ -413,11 +356,6 @@ export class IncidentService {
     await this.announceStatus(incidentId);
   }
 
-  /**
-   * Changes how dangerous the scene is. Peers who were heading to the scene are
-   * stood down (in the same database statement) when the scene is no longer
-   * CLEAR, and told so.
-   */
   async updateThreatLevel(
     incidentId: string,
     level: ThreatLevel,
@@ -447,13 +385,6 @@ export class IncidentService {
     });
   }
 
-  /**
-   * Assesses severity after creation. Only the claimant, an admin or a super
-   * may; the rider's self-report is accepted at creation only. Peers who were
-   * heading to the scene are stood down (in the same database statement) when
-   * the new severity is anything but MINOR, and told so. Setting the severity
-   * it already has is a no-op, not an error.
-   */
   async updateSeverity(
     incidentId: string,
     severity: IncidentSeverity,
@@ -494,10 +425,6 @@ export class IncidentService {
     });
   }
 
-  /**
-   * Hands the incident to a command center. `escalatedById` null means the
-   * system (the SLA sweeper). Returns the escalation id.
-   */
   async escalateIncident(
     incidentId: string,
     commandCenterId: string,
@@ -542,10 +469,6 @@ export class IncidentService {
       };
       this.events.emit(IncidentEvents.ESCALATED, escalated);
 
-      /**
-       * Notify the responder who is currently handling the incident
-       * that it has been escalated to a command center.
-       */
       if (incident.claimed_by_id) {
         this.events.emit('notification.created', {
           userId: incident.claimed_by_id,
@@ -572,12 +495,6 @@ export class IncidentService {
     }
     await this.announceStatus(incidentId);
   }
-
-  // =====================================================================
-  // INCIDENT READS
-  // Staff-only. Restrict by role (and, for admins, by command center) in the
-  // controller or a guard: these methods do not scope by caller.
-  // =====================================================================
 
   async getIncident(incidentId: string): Promise<IncidentEntity> {
     const incident = await this.incidentRepository.findIncidentById(incidentId);
@@ -606,11 +523,6 @@ export class IncidentService {
     );
   }
 
-  // =====================================================================
-  // REPORTS
-  // =====================================================================
-
-  /** The reporter is the authenticated responder; their center owns the report. */
   async createReport(
     dto: CreateIncidentReportDto,
     reporterId: string,
@@ -684,7 +596,6 @@ export class IncidentService {
     return updated;
   }
 
-  /** First submission, or resubmission after a revision request. */
   async submitReport(
     reportId: string,
     submitterId: string,
@@ -736,10 +647,6 @@ export class IncidentService {
       ),
     );
 
-    /**
-     * Emit an event to trigger a push notification, informing the
-     * reporter that their incident report has been approved.
-     */
     const report = await this.incidentReportRepository.findReportById(reportId);
     if (report && report.assigned_reporter_id) {
       this.events.emit('notification.created', {
@@ -759,7 +666,6 @@ export class IncidentService {
     reviewerId: string,
     notes: string,
   ): Promise<void> {
-    // The schema requires notes for a revision request, and the reporter sees them.
     if (notes.trim() === '') {
       throw new BadRequestException(
         'Notes are required when requesting a revision',
@@ -773,11 +679,6 @@ export class IncidentService {
       ),
     );
 
-    /**
-     * Emit an event to trigger a push notification, informing the
-     * reporter that their incident report needs revision, including
-     * the admin's feedback.
-     */
     const report = await this.incidentReportRepository.findReportById(reportId);
     if (report && report.assigned_reporter_id) {
       this.events.emit('notification.created', {
@@ -792,10 +693,6 @@ export class IncidentService {
     await this.announceReport(reportId);
   }
 
-  /**
-   * Visible to a super, the report's own reporter, or an admin of the
-   * report's command center.
-   */
   async getReport(
     reportId: string,
     actor: ServiceActor,
@@ -814,10 +711,6 @@ export class IncidentService {
     return report;
   }
 
-  /**
-   * The review queue. An admin only ever sees their own command center, no
-   * matter what the query asks for; a super may pick one or see all.
-   */
   async listReportsAwaitingReview(
     actor: ServiceActor,
     query: FindReportsAwaitingReviewQueryDto,
@@ -840,10 +733,42 @@ export class IncidentService {
   }
 
   // =====================================================================
+  // LISTENERS
+  // =====================================================================
+
+  @OnEvent('incident.sla_timeout')
+  async handleSlaTimeout(event: { incidentId: string }): Promise<void> {
+    try {
+      const ccId = await this.incidentRepository.findFirstCommandCenterId();
+
+      if (!ccId) {
+        this.logger.error('No command center exists to escalate to.');
+        return;
+      }
+
+      await this.escalateIncident(
+        event.incidentId,
+        ccId,
+        EscalationReason.SLA_TIMEOUT,
+        null, // null means the system escalated it
+        'Auto-escalated: No responder claimed within 60 seconds.',
+      );
+
+      this.logger.log(
+        `Successfully auto-escalated incident ${event.incidentId} to CC ${ccId}.`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to auto-escalate incident ${event.incidentId}`,
+        error,
+      );
+    }
+  }
+
+  // =====================================================================
   // INTERNALS
   // =====================================================================
 
-  /** A bad or tampered cursor is the caller's mistake: 400, not 500. */
   private async withValidCursor<T>(read: () => Promise<T>): Promise<T> {
     try {
       return await read();
@@ -885,7 +810,6 @@ export class IncidentService {
     };
   }
 
-  /** Reads the incident as it is now and announces its status. */
   private announceStatus(incidentId: string): Promise<void> {
     return this.afterIncidentChange(incidentId, (incident) => {
       const event: IncidentStatusChangedEvent = {
@@ -896,12 +820,6 @@ export class IncidentService {
     });
   }
 
-  /**
-   * Tells each stood-down peer, individually. Deliberately does not depend on
-   * re-reading the incident: the database has already stood these riders down,
-   * so the notice must go out even if that read fails. One peer's failing
-   * listener never stops the others being told.
-   */
   private async announcePeerStandDown(
     incidentId: string,
     peerDriverIds: string[],
@@ -957,11 +875,6 @@ export class IncidentService {
     return this.safelyAsync(what, () => Promise.resolve(fn()));
   }
 
-  /**
-   * Announcing happens AFTER the write has committed, so a failure here must
-   * not turn a successful action into an error for the caller. Clients recover
-   * by refetching over REST.
-   */
   private async safelyAsync(
     what: string,
     fn: () => Promise<void>,
@@ -977,7 +890,6 @@ export class IncidentService {
   }
 }
 
-/** True for a Postgres error with the given SQLSTATE code. */
 function isPgError(error: unknown, code: string): boolean {
   return (
     typeof error === 'object' &&

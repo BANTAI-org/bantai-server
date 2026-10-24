@@ -15,12 +15,12 @@ import { IncidentModule } from './modules/incidents/incidents.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { DevicesModule } from './modules/devices/devices.module';
 import { GpsModule } from './modules/gps/gps.module';
-import { WaveDispatchModule } from './modules/wave-dispatch/wave-dispatch.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { validate } from './config/env.config';
 import { StorageModule } from './modules/storage/s3.module';
 import { CommunicationsModule } from './modules/communications/comms.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
@@ -41,11 +41,11 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     AuditLogsModule,
     DevicesModule,
     GpsModule,
-    WaveDispatchModule,
     DashboardModule,
     StorageModule,
     CommunicationsModule,
     NotificationsModule,
+    ScheduleModule.forRoot(),
   ],
   controllers: [AppController],
   providers: [AppService],

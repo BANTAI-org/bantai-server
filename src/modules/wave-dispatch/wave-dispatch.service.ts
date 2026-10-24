@@ -1,219 +1,232 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { OnEvent } from '@nestjs/event-emitter';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { IncidentRepository } from '../incidents/incidents.repository';
 import { RedisService } from '../redis/redis.service';
 import { IncidentEvents } from '../incidents/events/incident-events';
-import { GeoPoint } from '../../common/interfaces/geo-location.interface';
-import { AssignmentOrigin } from '../incidents/enums/assignment-origin.enum';
+import type { IncidentCreatedEvent } from '../incidents/events/incident-events';
 
 /**
- * Wave dispatch service responsible for finding nearby responders and peers
- * when an incident is created and issuing wave offers to them.
+ * Autonomous Wave Dispatch Engine.
+ *
+ * When an incident is created, this service fires a sequence of radial waves:
+ *   - Wave 1 (0s,   1km)
+ *   - Wave 2 (20s,  2km)
+ *   - Wave 3 (40s,  3km)
+ *   - SLA Timeout (60s) → escalate to Command Center
+ *
+ * Timers are tracked per-incident and cancelled immediately when the incident
+ * is claimed, resolved, cancelled, or escalated. Every wave verifies its
+ * candidates against Postgres to ensure they are genuinely on-duty.
  */
 @Injectable()
-export class WaveDispatchService {
+export class WaveDispatchService implements OnModuleDestroy {
   private readonly logger = new Logger(WaveDispatchService.name);
+
+  /**
+   * Tracks the timers for each active incident so they can be cancelled
+   * when the incident is claimed (or otherwise reaches a terminal state).
+   */
+  private activeTimers = new Map<string, NodeJS.Timeout[]>();
 
   constructor(
     private readonly incidentRepository: IncidentRepository,
     private readonly redisService: RedisService,
+    private readonly events: EventEmitter2,
   ) {}
 
   /**
-   * Default wave radius in meters for different incident types.
-   * Can be adjusted based on incident severity/threat level.
+   * Fires the wave sequence when an incident is created.
    */
-  private readonly DEFAULT_WAVE_RADIUS_METERS = 1000; // 1km
+  @OnEvent(IncidentEvents.CREATED)
+  async handleIncidentCreated(event: IncidentCreatedEvent): Promise<void> {
+    this.logger.log(`Starting wave sequence for incident ${event.incidentId}`);
 
-  /**
-   * Get wave radius based on incident characteristics.
-   * More severe incidents get larger wave radius.
-   */
-  private getWaveRadius(
-    threatCategory: string,
-    threatLevel: string,
-    severity: string | null,
-  ): number {
-    // Base radius
-    let radius = this.DEFAULT_WAVE_RADIUS_METERS;
+    // Wave 1: Immediate (1km)
+    await this.issueWave(event, 1, 1000);
 
-    // Adjust based on threat level
-    if (threatLevel === 'ACTIVE_THREAT') {
-      radius = Math.max(radius, 2000); // At least 2km for active threats
-    } else if (threatLevel === 'CLEAR') {
-      radius = Math.min(radius, 1000); // At most 1km for clear scenes
-    }
+    // Wave 2: After 20 seconds (2km)
+    const timer2 = setTimeout(() => {
+      void this.checkAndFireNextWave(event, 2, 2000);
+    }, 20_000);
 
-    // Adjust based on threat category
-    if (threatCategory === 'HAZARD') {
-      radius = Math.max(radius, 3000); // Up to 3km for hazards
-    } else if (threatCategory === 'ASSIST') {
-      radius = Math.min(radius, 2000); // At most 2km for assists
-    }
+    // Wave 3: After 40 seconds (3km)
+    const timer3 = setTimeout(() => {
+      void this.checkAndFireNextWave(event, 3, 3000);
+    }, 40_000);
 
-    // Adjust based on severity if provided
-    if (severity) {
-      if (severity === 'CRITICAL') {
-        radius = Math.max(radius, 3000);
-      } else if (severity === 'SERIOUS') {
-        radius = Math.max(radius, 2000);
-      } else if (severity === 'MINOR') {
-        radius = Math.min(radius, 1000);
-      }
-    }
+    // SLA Timeout: After 60 seconds, escalate to Command Center
+    const timerEscalate = setTimeout(() => {
+      void this.triggerSlaEscalation(event);
+    }, 60_000);
 
-    // Ensure radius is within reasonable bounds (1km - 3km)
-    return Math.min(Math.max(radius, 1000), 3000);
+    this.activeTimers.set(event.incidentId, [timer2, timer3, timerEscalate]);
   }
 
   /**
-   * Handle incident creation by issuing a wave offer to nearby responders.
-   * @param event The incident created event
+   * Before firing the next wave, check whether the incident is still unclaimed.
    */
-  @OnEvent(IncidentEvents.CREATED)
-  async handleIncidentCreated(event: {
-    incidentId: string;
-    location: GeoPoint;
-    threatCategory: string;
-    threatLevel: string;
-    severity: string | null;
-  }): Promise<void> {
+  private async checkAndFireNextWave(
+    event: IncidentCreatedEvent,
+    waveNumber: number,
+    radiusMeters: number,
+  ): Promise<void> {
+    try {
+      const isUnclaimed = await this.incidentRepository.isIncidentUnclaimed(
+        event.incidentId,
+      );
+
+      if (isUnclaimed) {
+        await this.issueWave(event, waveNumber, radiusMeters);
+      } else {
+        this.logger.log(
+          `Incident ${event.incidentId} was claimed or closed. Skipping Wave #${waveNumber}.`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to check wave status for ${event.incidentId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  /**
+   * After 60 seconds with no claimant, escalate to a Command Center.
+   */
+  private async triggerSlaEscalation(
+    event: IncidentCreatedEvent,
+  ): Promise<void> {
+    try {
+      const isUnclaimed = await this.incidentRepository.isIncidentUnclaimed(
+        event.incidentId,
+      );
+
+      if (isUnclaimed) {
+        this.logger.warn(
+          `Incident ${event.incidentId} hit SLA timeout. Escalating to Command Center.`,
+        );
+        this.events.emit('incident.sla_timeout', {
+          incidentId: event.incidentId,
+        });
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed SLA check for ${event.incidentId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  /**
+   * Core wave-issuance logic:
+   *   1. Find candidates in Redis (spatial search).
+   *   2. VERIFY each candidate is genuinely `on_duty` in Postgres.
+   *   3. Persist the wave + assignments for verified responders only.
+   *   4. Emit `wave.issued` so the gateway can notify them.
+   */
+  private async issueWave(
+    event: IncidentCreatedEvent,
+    waveNumber: number,
+    radiusMeters: number,
+  ): Promise<void> {
     try {
       this.logger.log(
-        `Processing wave dispatch for incident ${event.incidentId}`,
+        `Issuing Wave #${waveNumber} (${radiusMeters}m) for incident ${event.incidentId}`,
       );
 
-      // Determine wave radius based on incident characteristics
-      const waveRadiusMeters = this.getWaveRadius(
-        event.threatCategory,
-        event.threatLevel,
-        event.severity,
-      );
-
-      this.logger.log(
-        `Issuing wave ${waveRadiusMeters}m radius for incident ${event.incidentId}`,
-      );
-
-      // Find nearby on-duty responders
+      // 1. Find nearby candidates in Redis
       const nearbyResponders = await this.redisService.findNearby(
         'responder',
         event.location,
-        waveRadiusMeters,
-        { maxAgeMs: 30000 }, // Only responders active in last 30s
-      );
-
-      this.logger.log(
-        `Found ${nearbyResponders.length} nearby responders for incident ${event.incidentId}`,
+        radiusMeters,
+        { maxAgeMs: 30_000 },
       );
 
       if (nearbyResponders.length === 0) {
-        this.logger.log(
-          `No nearby responders found for incident ${event.incidentId}`,
+        this.logger.debug(
+          `No responders found within ${radiusMeters}m for Wave #${waveNumber}`,
         );
         return;
       }
 
-      // Create wave record
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment,@typescript-eslint/no-unsafe-call,@typescript-eslint/no-unsafe-member-access
-      const waveResult = await (this.incidentRepository as any).db.queryRows(
-        `
-          INSERT INTO incident_dispatch_wave (
-            incident_id,
-            wave_number,
-            radius_meters
-          )
-          SELECT
-            $1,
-            COALESCE((SELECT MAX(wave_number) + 1 FROM incident_dispatch_wave WHERE incident_id = $1), 1),
-            $2
-          RETURNING id
-        `,
-        [event.incidentId, waveRadiusMeters],
+      // 2. Verify against Postgres — only keep responders who are
+      //    actually `on_duty` with an active, non-deleted account.
+      const activeIds = await this.incidentRepository.filterOnDutyResponders(
+        nearbyResponders.map((r) => r.user_id),
       );
 
-      const waveId =
-        Array.isArray(waveResult) && waveResult.length > 0
-          ? ((waveResult[0] as { id: string | null }).id ?? null)
-          : null;
-      if (!waveId) {
-        throw new Error('Failed to create wave record');
+      const verifiedResponders = nearbyResponders.filter((r) =>
+        activeIds.includes(r.user_id),
+      );
+
+      if (verifiedResponders.length === 0) {
+        this.logger.debug(
+          `All nearby responders for Wave #${waveNumber} are off-duty or inactive.`,
+        );
+        return;
       }
 
-      this.logger.log(
-        `Created wave ${waveId} (wave #${await this.getWaveNumber(event.incidentId)}) for incident ${event.incidentId}`,
+      // 3. Create the wave + assignments in Postgres
+      const waveId = await this.incidentRepository.createDispatchWave(
+        event.incidentId,
+        radiusMeters,
       );
 
-      // Create assignment records for each nearby responder
-      const assignmentPromises = nearbyResponders.map(async (responder) => {
-        // Validate responder has required properties
-        if (
-          responder &&
-          typeof responder === 'object' &&
-          'user_id' in responder &&
-          'distance_meters' in responder
-        ) {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-call,@typescript-eslint/no-unsafe-member-access
-          await (this.incidentRepository as any).db.query(
-            `
-              INSERT INTO incident_responder_assignment (
-                incident_id,
-                wave_id,
-                responder_id,
-                origin,
-                distance_meters,
-                status
-              )
-              VALUES (
-                $1, $2, $3, $4, $5, 'OFFERED'
-              )
-            `,
-            [
-              event.incidentId,
-              waveId,
-              (responder as { user_id: string; distance_meters: number })
-                .user_id,
-              AssignmentOrigin.WAVE_OFFER,
-              (responder as { user_id: string; distance_meters: number })
-                .distance_meters,
-            ],
-          );
-        }
+      await this.incidentRepository.createWaveAssignments(
+        event.incidentId,
+        waveId,
+        verifiedResponders.map((r) => ({
+          user_id: r.user_id,
+          distance_meters: r.distance_meters,
+        })),
+      );
+
+      // 4. Notify the verified responders via WebSocket
+      this.events.emit('wave.issued', {
+        incidentId: event.incidentId,
+        waveId,
+        waveNumber,
+        responders: verifiedResponders,
       });
 
-      await Promise.all(assignmentPromises);
-
       this.logger.log(
-        `Created ${nearbyResponders.length} assignment records for wave ${waveId}`,
+        `Wave #${waveNumber} issued to ${verifiedResponders.length} verified responders`,
       );
-
-      // TODO: Notify responders via WebSocket/gateway
-      // This would typically involve publishing to a Redis channel or
-      // using the IncidentGateway to send notifications
     } catch (error) {
       this.logger.error(
-        `Failed to process wave dispatch for incident ${event.incidentId}:`,
-        error,
+        `Failed to issue Wave #${waveNumber}`,
+        error instanceof Error ? error.stack : String(error),
       );
-      // Don't throw - we don't want wave dispatch failures to affect incident creation
     }
   }
 
   /**
-   * Get the next wave number for an incident (helper for logging).
-   * @private
+   * Cancels pending waves the moment an incident is claimed, resolved,
+   * cancelled, or escalated. Prevents ghost offers after the incident has moved on.
    */
-  private async getWaveNumber(incidentId: string): Promise<number> {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment,@typescript-eslint/no-unsafe-call,@typescript-eslint/no-unsafe-member-access
-    const result = await (this.incidentRepository as any).db.queryRows(
-      `
-        SELECT COALESCE(MAX(wave_number), 0) + 1 as wave_number
-        FROM incident_dispatch_wave
-        WHERE incident_id = $1
-      `,
-      [incidentId],
-    );
-    return Array.isArray(result) && result.length > 0
-      ? ((result[0] as { wave_number: number | null }).wave_number ?? 1)
-      : 1;
+  @OnEvent(IncidentEvents.STATUS_CHANGED)
+  handleStatusChanged(event: { incidentId: string; status: string }): void {
+    const stopStatuses = ['CLAIMED', 'RESOLVED', 'CANCELLED', 'ESCALATED'];
+
+    if (stopStatuses.includes(event.status)) {
+      const timers = this.activeTimers.get(event.incidentId);
+      if (timers) {
+        timers.forEach((timer) => clearTimeout(timer));
+        this.activeTimers.delete(event.incidentId);
+        this.logger.log(
+          `Cleared pending waves for incident ${event.incidentId} (Status: ${event.status})`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Cleans up any remaining timers on shutdown (Railway redeploy, etc.).
+   */
+  onModuleDestroy(): void {
+    for (const timers of this.activeTimers.values()) {
+      timers.forEach((timer) => clearTimeout(timer));
+    }
+    this.activeTimers.clear();
   }
 }

@@ -12,6 +12,8 @@ import { IncidentRepository } from './incidents.repository';
 import { IncidentReportRepository } from './incidents-report.repository';
 import { PeerDispatchService } from './peer-dispatch.service';
 import { TrackingService } from './incident-tracking.service';
+import { WaveDispatchService } from '../wave-dispatch/wave-dispatch.service';
+import { SlaSweeperService } from './sla-sweeper.service'; // 👈 MUST IMPORT
 
 @Module({
   imports: [
@@ -29,6 +31,8 @@ import { TrackingService } from './incident-tracking.service';
     IncidentGateway,
     TrackingService,
     PeerDispatchService,
+    WaveDispatchService,
+    SlaSweeperService,
   ],
   exports: [IncidentService, TrackingService],
 })

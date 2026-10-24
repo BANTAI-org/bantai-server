@@ -7,7 +7,6 @@ import {
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
-import type { Request } from 'express';
 import { Roles } from '../../common/decorators/role.decorator';
 import { ApiRoles } from '../../common/decorators/api-roles.decorator';
 import { Role } from '../../common/enums/role-enum';
@@ -16,6 +15,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { UpdateLocationDto } from './dto/update-location.dto';
 import { RedisService } from './redis.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { DatabaseService } from '../../database/database.service'; // 👈 Import
 import {
   ApiBearerAuth,
   ApiBody,
@@ -35,7 +35,10 @@ const bodyPipe = new ValidationPipe({ whitelist: true, transform: true });
 @ApiTags('Location')
 @ApiBearerAuth('access-token')
 export class RedisController {
-  constructor(private readonly redisService: RedisService) {}
+  constructor(
+    private readonly redisService: RedisService,
+    private readonly db: DatabaseService,
+  ) {}
 
   @Post('driver')
   @ApiOperation({ summary: 'Update the authenticated driver location' })
@@ -50,6 +53,20 @@ export class RedisController {
     @Body(bodyPipe) dto: UpdateLocationDto,
     @CurrentUser('sub') driverId: string,
   ): Promise<void> {
+    const { rows } = await this.db.query<{ duty_status: string }>(
+      `SELECT p.duty_status 
+         FROM d_profile p
+         JOIN user_account u ON u.id = p.user_id
+        WHERE p.user_id = $1::uuid 
+          AND u.deleted_at IS NULL 
+          AND u.account_status = 'active'`,
+      [driverId],
+    );
+
+    if (rows[0]?.duty_status !== 'on_duty') {
+      return;
+    }
+
     await this.redisService.update(
       driverId,
       'driver',
@@ -71,6 +88,20 @@ export class RedisController {
     @Body(bodyPipe) dto: UpdateLocationDto,
     @CurrentUser('sub') responderId: string,
   ): Promise<void> {
+    const { rows } = await this.db.query<{ availability: string }>(
+      `SELECT p.availability 
+         FROM r_profile p
+         JOIN user_account u ON u.id = p.user_id
+        WHERE p.user_id = $1::uuid 
+          AND u.deleted_at IS NULL 
+          AND u.account_status = 'active'`,
+      [responderId],
+    );
+
+    if (rows[0]?.availability !== 'on_duty') {
+      return;
+    }
+
     await this.redisService.update(
       responderId,
       'responder',

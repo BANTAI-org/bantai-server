@@ -96,6 +96,7 @@ function toIncident(row: IncidentRow): IncidentEntity {
   const { lng, lat, ...rest } = row;
   return { ...rest, location: { longitude: lng, latitude: lat } };
 }
+
 @Injectable()
 export class IncidentRepository {
   constructor(private readonly db: DatabaseService) {}
@@ -707,5 +708,127 @@ export class IncidentRepository {
       items: page.items.map((r) => toIncidentLog(stripCursorColumn(r))),
       nextCursor: page.nextCursor,
     };
+  }
+
+  // =====================================================================
+  // WAVE DISPATCH & SLA METHODS
+  // =====================================================================
+
+  /**
+   * Checks if an incident is still waiting for a responder (DETECTED or DISPATCHING).
+   */
+  async isIncidentUnclaimed(incidentId: string): Promise<boolean> {
+    const [row] = await queryRows<{ status: string }>(
+      this.db,
+      `SELECT status FROM incident WHERE id = $1::uuid`,
+      [incidentId],
+    );
+    return row?.status === 'DISPATCHING' || row?.status === 'DETECTED';
+  }
+
+  /**
+   * Creates a wave record and returns its ID.
+   * Automatically increments the wave number (Wave 1, Wave 2, etc.).
+   */
+  async createDispatchWave(
+    incidentId: string,
+    radiusMeters: number,
+  ): Promise<string> {
+    const rows = await queryRows<{ id: string }>(
+      this.db,
+      `INSERT INTO incident_dispatch_wave (incident_id, wave_number, radius_meters)
+       SELECT 
+         $1::uuid, 
+         COALESCE((SELECT MAX(wave_number) + 1 FROM incident_dispatch_wave WHERE incident_id = $1::uuid), 1),
+         $2::int
+       RETURNING id`,
+      [incidentId, radiusMeters],
+    );
+    return rows[0].id;
+  }
+
+  /**
+   * Bulk inserts assignment records for a wave.
+   * ON CONFLICT prevents offering the same incident to the same responder twice.
+   */
+  async createWaveAssignments(
+    incidentId: string,
+    waveId: string,
+    responders: { user_id: string; distance_meters: number }[],
+  ): Promise<void> {
+    if (responders.length === 0) return;
+
+    const userIds = responders.map((r) => r.user_id);
+    const distances = responders.map((r) => r.distance_meters);
+
+    await this.db.query(
+      `INSERT INTO incident_responder_assignment (
+         incident_id, wave_id, responder_id, origin, distance_meters, status
+       )
+       SELECT $1::uuid, $2::uuid, unnest($3::uuid[]), 'WAVE_OFFER'::assignment_origin_enum, unnest($4::numeric[]), 'OFFERED'::assignment_status_enum
+       ON CONFLICT (incident_id, responder_id) DO NOTHING`,
+      [incidentId, waveId, userIds, distances],
+    );
+  }
+
+  /**
+   * Helper to get the first Command Center for SLA Escalation fallback.
+   */
+  async findFirstCommandCenterId(): Promise<string | null> {
+    const [row] = await queryRows<{ id: string }>(
+      this.db,
+      `SELECT id FROM command_center LIMIT 1`,
+      [],
+    );
+    return row?.id ?? null;
+  }
+
+  /**
+   * Finds incidents that have been stuck in DISPATCHING for too long.
+   * Used by the SLA Sweeper to catch cases where the server restarted and lost the timers.
+   */
+  async findOrphanedIncidents(thresholdSeconds: number): Promise<string[]> {
+    const rows = await queryRows<{ id: string }>(
+      this.db,
+      `SELECT id FROM incident 
+       WHERE status = 'DISPATCHING' 
+         AND created_at < NOW() - INTERVAL '1 second' * $1
+       LIMIT 10`,
+      [thresholdSeconds],
+    );
+    return rows.map((r) => r.id);
+  }
+
+  async filterOnDutyResponders(userIds: string[]): Promise<string[]> {
+    if (userIds.length === 0) return [];
+    const rows = await queryRows<{ user_id: string }>(
+      this.db,
+      `SELECT p.user_id FROM r_profile p
+       JOIN user_account u ON u.id = p.user_id
+       WHERE p.user_id = ANY($1::uuid[])
+         AND p.availability = 'on_duty'
+         AND u.deleted_at IS NULL
+         AND u.account_status = 'active'`,
+      [userIds],
+    );
+    return rows.map((r) => r.user_id);
+  }
+
+  /**
+   * Same as filterOnDutyResponders, but for drivers.
+   */
+  async filterOnDutyDrivers(userIds: string[]): Promise<string[]> {
+    if (userIds.length === 0) return [];
+    const rows = await queryRows<{ user_id: string }>(
+      this.db,
+      `SELECT p.user_id FROM d_profile p
+       JOIN user_account u ON u.id = p.user_id
+       WHERE p.user_id = ANY($1::uuid[])
+         AND p.duty_status = 'on_duty'
+         AND u.deleted_at IS NULL
+         AND u.account_status = 'active'`,
+      [userIds],
+    );
+    return rows.map((r) => r.user_id);
   }
 }
