@@ -15,6 +15,7 @@ import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/role.decorator';
 import { ApiRoles } from '../../common/decorators/api-roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { DeviceStatus } from './enums/device-status.enum';
 import {
@@ -62,6 +63,50 @@ export class DevicesController {
       hardwareSerial: pairDeviceDto.hardwareSerial,
       driverId: pairDeviceDto.driverId,
     });
+  }
+
+  /**
+   * The device currently associated with the authenticated driver.
+   *
+   * Returns the paired device, or a reported-lost device if the driver has no
+   * working replacement. Returns `null` (200 with null body) when the driver
+   * has never paired a device — that is a normal state the client renders as
+   * the setup screen, not an error.
+   *
+   * MUST be declared before `@Get(':deviceId')`; otherwise "me" would be
+   * parsed as a UUID and rejected by ParseUUIDPipe.
+   */
+  @Get('me')
+  @ApiOperation({ summary: "Get the current driver's connected device" })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Device returned, or null when the driver has never paired a device',
+    schema: {
+      type: 'object',
+      nullable: true,
+      properties: {
+        deviceId: { type: 'string', format: 'uuid' },
+        hardwareSerial: { type: 'string', example: 'BANTAI-CAM-000123' },
+        deviceStatus: {
+          type: 'string',
+          enum: ['paired', 'reported_lost'],
+          example: 'paired',
+        },
+        pairedAt: {
+          type: 'string',
+          format: 'date-time',
+          nullable: true,
+          example: '2026-10-22T09:15:00.000Z',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @Roles(Role.DRIVER)
+  @ApiRoles(Role.DRIVER)
+  async getMyDevice(@CurrentUser('sub') driverId: string) {
+    return this.devicesService.getConnectedDeviceForDriver(driverId);
   }
 
   @Post(':deviceId/unpair')

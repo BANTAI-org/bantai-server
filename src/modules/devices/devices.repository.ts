@@ -3,6 +3,7 @@ import { DeviceStatus } from './enums/device-status.enum';
 import { CreateNewDeviceData } from './types/create-new-device.type';
 import { DeviceEntity } from './interfaces/device-entity.interface';
 import { DevicePairingHistoryEntity } from './interfaces/device-pairing-history-entity.interface';
+import { DriverDeviceView } from './interfaces/driver-device-view.interface';
 import {
   BadRequestException,
   Injectable,
@@ -75,6 +76,48 @@ export class DevicesRepository {
       [hardwareSerial],
     );
     return result.rows[0]?.id ?? null;
+  }
+
+  async getConnectedDeviceForDriver(
+    driverId: string,
+  ): Promise<DriverDeviceView | null> {
+    const result = await this.db.query<{
+      id: string;
+      hardwareSerial: string;
+      status: DeviceStatus;
+      pairedAt: Date | string | null;
+    }>(
+      `SELECT
+       id,
+       hardware_serial AS "hardwareSerial",
+       status,
+       paired_at AS "pairedAt"
+     FROM device
+     WHERE driver_id = $1::uuid
+       AND status IN ('paired', 'reported_lost')
+     ORDER BY
+       CASE status WHEN 'paired' THEN 0 ELSE 1 END,
+       paired_at DESC NULLS LAST
+     LIMIT 1`,
+      [driverId],
+    );
+
+    const row = result.rows[0];
+    if (!row) return null;
+
+    const toIsoString = (value: Date | string | null): string | null =>
+      value === null
+        ? null
+        : value instanceof Date
+          ? value.toISOString()
+          : value;
+
+    return {
+      deviceId: row.id,
+      hardwareSerial: row.hardwareSerial,
+      deviceStatus: row.status,
+      pairedAt: toIsoString(row.pairedAt),
+    };
   }
 
   async pairDevice(data: {

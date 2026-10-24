@@ -3,6 +3,7 @@ import { NotFoundException } from '@nestjs/common';
 import { BadRequestException } from '@nestjs/common';
 
 import { DevicesRepository } from './devices.repository';
+import { DriverDeviceView } from './interfaces/driver-device-view.interface';
 import { CreateNewDeviceData } from './types/create-new-device.type';
 import { DeviceEntity } from './interfaces/device-entity.interface';
 import { DeviceStatus } from './enums/device-status.enum';
@@ -125,6 +126,20 @@ export class DevicesService {
 
   async getDeviceById(deviceId: string): Promise<DeviceEntity | null> {
     return this.devicesRepository.getDeviceById(deviceId);
+  }
+
+  /**
+   * Returns the device currently associated with a driver (paired, or
+   * reported_lost if no paired replacement exists), or null if the driver
+   * has never paired a device.
+   *
+   * Returns null rather than throwing: "no device" is a normal state the
+   * client needs to render (setup screen), not an error.
+   */
+  async getConnectedDeviceForDriver(
+    driverId: string,
+  ): Promise<DriverDeviceView | null> {
+    return this.devicesRepository.getConnectedDeviceForDriver(driverId);
   }
 
   async getDevicesByStatus(status: DeviceStatus): Promise<DeviceEntity[]> {
