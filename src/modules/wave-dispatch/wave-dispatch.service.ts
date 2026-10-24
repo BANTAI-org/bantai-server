@@ -1,31 +1,20 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { IncidentRepository } from '../incidents/incidents.repository';
 import { RedisService } from '../redis/redis.service';
 import { IncidentEvents } from '../incidents/events/incident-events';
 import type { IncidentCreatedEvent } from '../incidents/events/incident-events';
+import type { IncidentEntity } from '../incidents/interfaces/incident-entity.interface';
 
-/**
- * Autonomous Wave Dispatch Engine.
- *
- * When an incident is created, this service fires a sequence of radial waves:
- *   - Wave 1 (0s,   1km)
- *   - Wave 2 (20s,  2km)
- *   - Wave 3 (40s,  3km)
- *   - SLA Timeout (60s) → escalate to Command Center
- *
- * Timers are tracked per-incident and cancelled immediately when the incident
- * is claimed, resolved, cancelled, or escalated. Every wave verifies its
- * candidates against Postgres to ensure they are genuinely on-duty.
- */
 @Injectable()
-export class WaveDispatchService implements OnModuleDestroy {
+export class WaveDispatchService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(WaveDispatchService.name);
 
-  /**
-   * Tracks the timers for each active incident so they can be cancelled
-   * when the incident is claimed (or otherwise reaches a terminal state).
-   */
   private activeTimers = new Map<string, NodeJS.Timeout[]>();
 
   constructor(
@@ -35,26 +24,148 @@ export class WaveDispatchService implements OnModuleDestroy {
   ) {}
 
   /**
-   * Fires the wave sequence when an incident is created.
+   * On startup, re-arm timers for any incident still in DISPATCHING.
+   * Railway redeploys kill in-memory timers, which would otherwise leave
+   * incidents stuck with no further waves and no SLA escalation.
    */
+  async onModuleInit(): Promise<void> {
+    try {
+      const orphans = await this.incidentRepository.findDispatchingIncidents();
+      if (orphans.length === 0) {
+        this.logger.log('Wave engine: no orphaned incidents to recover');
+        return;
+      }
+      this.logger.warn(
+        `Wave engine: recovering ${orphans.length} orphaned DISPATCHING incidents`,
+      );
+      for (const incident of orphans) {
+        this.recoverIncident(incident);
+      }
+    } catch (error) {
+      this.logger.error(
+        'Wave engine: recovery failed',
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  /**
+   * Re-arms the timers for an incident found on startup. Uses the incident's
+   * created_at to compute the remaining delay, so recovery does not restart
+   * the wave clock from zero.
+   */
+  private recoverIncident(incident: IncidentEntity): void {
+    const ageMs = Date.now() - new Date(incident.created_at).getTime();
+    const event = this.toCreatedEvent(incident);
+
+    const remaining = (targetMs: number): number =>
+      Math.max(0, targetMs - ageMs);
+
+    const timers: NodeJS.Timeout[] = [];
+
+    // Wave 2 at 20s, or immediate if we're already past that.
+    timers.push(
+      setTimeout(
+        () => void this.checkAndFireNextWave(event, 2, 2000),
+        remaining(20_000),
+      ),
+    );
+
+    // Wave 3 at 40s, or immediate if we're already past that.
+    timers.push(
+      setTimeout(
+        () => void this.checkAndFireNextWave(event, 3, 3000),
+        remaining(40_000),
+      ),
+    );
+
+    // SLA at 60s, or immediate if we're already past that.
+    timers.push(
+      setTimeout(
+        () => void this.triggerSlaEscalation(event),
+        remaining(60_000),
+      ),
+    );
+
+    this.activeTimers.set(incident.id, timers);
+    this.logger.log(
+      `Recovered incident ${incident.id} (age ${Math.round(ageMs / 1000)}s)`,
+    );
+  }
+
+  private toCreatedEvent(incident: IncidentEntity): IncidentCreatedEvent {
+    return {
+      incidentId: incident.id,
+      triggerSource: incident.trigger_source,
+      threatType: incident.threat_type,
+      threatCategory: incident.threat_category,
+      severity: incident.severity,
+      location: incident.location,
+      driverId: incident.driver_id,
+    };
+  }
+
   @OnEvent(IncidentEvents.CREATED)
   async handleIncidentCreated(event: IncidentCreatedEvent): Promise<void> {
     this.logger.log(`Starting wave sequence for incident ${event.incidentId}`);
-
-    // Wave 1: Immediate (1km)
     await this.issueWave(event, 1, 1000);
+    this.armTimers(event);
+  }
 
-    // Wave 2: After 20 seconds (2km)
+  /**
+   * Re-arms the sequence when an incident returns to DISPATCHING after a
+   * responder stands down. Without this, the timers were already cleared
+   * at CLAIMED and the incident would sit in DISPATCHING until the
+   * 90-second SLA sweeper escalates it — never getting waves 2 or 3.
+   */
+  @OnEvent(IncidentEvents.STATUS_CHANGED)
+  async handleStatusChanged(event: {
+    incidentId: string;
+    status: string;
+  }): Promise<void> {
+    const stopStatuses = ['CLAIMED', 'RESOLVED', 'CANCELLED', 'ESCALATED'];
+    if (stopStatuses.includes(event.status)) {
+      const timers = this.activeTimers.get(event.incidentId);
+      if (timers) {
+        timers.forEach((timer) => clearTimeout(timer));
+        this.activeTimers.delete(event.incidentId);
+        this.logger.log(
+          `Cleared pending waves for incident ${event.incidentId} (Status: ${event.status})`,
+        );
+      }
+      return;
+    }
+
+    // Re-arm when the incident returns to DISPATCHING (stand-down path).
+    if (event.status === 'DISPATCHING') {
+      if (this.activeTimers.has(event.incidentId)) return;
+      try {
+        const incident = await this.incidentRepository.findIncidentById(
+          event.incidentId,
+        );
+        if (!incident) return;
+        this.logger.log(
+          `Re-arming waves for incident ${event.incidentId} (back to DISPATCHING)`,
+        );
+        this.recoverIncident(incident);
+      } catch (error) {
+        this.logger.error(
+          `Failed to re-arm waves for ${event.incidentId}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
+    }
+  }
+
+  private armTimers(event: IncidentCreatedEvent): void {
     const timer2 = setTimeout(() => {
       void this.checkAndFireNextWave(event, 2, 2000);
     }, 20_000);
 
-    // Wave 3: After 40 seconds (3km)
     const timer3 = setTimeout(() => {
       void this.checkAndFireNextWave(event, 3, 3000);
     }, 40_000);
 
-    // SLA Timeout: After 60 seconds, escalate to Command Center
     const timerEscalate = setTimeout(() => {
       void this.triggerSlaEscalation(event);
     }, 60_000);
@@ -62,9 +173,6 @@ export class WaveDispatchService implements OnModuleDestroy {
     this.activeTimers.set(event.incidentId, [timer2, timer3, timerEscalate]);
   }
 
-  /**
-   * Before firing the next wave, check whether the incident is still unclaimed.
-   */
   private async checkAndFireNextWave(
     event: IncidentCreatedEvent,
     waveNumber: number,
@@ -90,9 +198,6 @@ export class WaveDispatchService implements OnModuleDestroy {
     }
   }
 
-  /**
-   * After 60 seconds with no claimant, escalate to a Command Center.
-   */
   private async triggerSlaEscalation(
     event: IncidentCreatedEvent,
   ): Promise<void> {
@@ -117,13 +222,6 @@ export class WaveDispatchService implements OnModuleDestroy {
     }
   }
 
-  /**
-   * Core wave-issuance logic:
-   *   1. Find candidates in Redis (spatial search).
-   *   2. VERIFY each candidate is genuinely `on_duty` in Postgres.
-   *   3. Persist the wave + assignments for verified responders only.
-   *   4. Emit `wave.issued` so the gateway can notify them.
-   */
   private async issueWave(
     event: IncidentCreatedEvent,
     waveNumber: number,
@@ -134,7 +232,6 @@ export class WaveDispatchService implements OnModuleDestroy {
         `Issuing Wave #${waveNumber} (${radiusMeters}m) for incident ${event.incidentId}`,
       );
 
-      // 1. Find nearby candidates in Redis
       const nearbyResponders = await this.redisService.findNearby(
         'responder',
         event.location,
@@ -149,8 +246,6 @@ export class WaveDispatchService implements OnModuleDestroy {
         return;
       }
 
-      // 2. Verify against Postgres — only keep responders who are
-      //    actually `on_duty` with an active, non-deleted account.
       const activeIds = await this.incidentRepository.filterOnDutyResponders(
         nearbyResponders.map((r) => r.user_id),
       );
@@ -166,7 +261,6 @@ export class WaveDispatchService implements OnModuleDestroy {
         return;
       }
 
-      // 3. Create the wave + assignments in Postgres
       const waveId = await this.incidentRepository.createDispatchWave(
         event.incidentId,
         radiusMeters,
@@ -181,7 +275,6 @@ export class WaveDispatchService implements OnModuleDestroy {
         })),
       );
 
-      // 4. Notify the verified responders via WebSocket
       this.events.emit('wave.issued', {
         incidentId: event.incidentId,
         waveId,
@@ -200,29 +293,6 @@ export class WaveDispatchService implements OnModuleDestroy {
     }
   }
 
-  /**
-   * Cancels pending waves the moment an incident is claimed, resolved,
-   * cancelled, or escalated. Prevents ghost offers after the incident has moved on.
-   */
-  @OnEvent(IncidentEvents.STATUS_CHANGED)
-  handleStatusChanged(event: { incidentId: string; status: string }): void {
-    const stopStatuses = ['CLAIMED', 'RESOLVED', 'CANCELLED', 'ESCALATED'];
-
-    if (stopStatuses.includes(event.status)) {
-      const timers = this.activeTimers.get(event.incidentId);
-      if (timers) {
-        timers.forEach((timer) => clearTimeout(timer));
-        this.activeTimers.delete(event.incidentId);
-        this.logger.log(
-          `Cleared pending waves for incident ${event.incidentId} (Status: ${event.status})`,
-        );
-      }
-    }
-  }
-
-  /**
-   * Cleans up any remaining timers on shutdown (Railway redeploy, etc.).
-   */
   onModuleDestroy(): void {
     for (const timers of this.activeTimers.values()) {
       timers.forEach((timer) => clearTimeout(timer));

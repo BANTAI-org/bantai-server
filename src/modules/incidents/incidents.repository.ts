@@ -28,18 +28,8 @@ import {
 } from '../../common/utils/cursor-pagination-helper.util';
 import { Injectable } from '@nestjs/common';
 
-/**
- * Policy assumption (change here if it differs): these roles may verify an
- * incident; riders (peers) never may. Used as `u.role IN (...)`.
- */
 const VERIFIER_ROLES = `('responder', 'admin', 'super')`;
 
-/**
- * SQL twin of isPeerHelpEligible() (peer-help-policy.util): may a nearby rider
- * physically help? `alias` is a row with threat_type, threat_category, severity
- * and threat_level. Keep the two in step; a test compares them over every
- * combination.
- */
 export const peerEligibleSql = (alias: string): string => `(
     ${alias}.threat_category = 'ASSIST'
     AND ${alias}.threat_type NOT IN ('GUN', 'BLADE')
@@ -47,13 +37,6 @@ export const peerEligibleSql = (alias: string): string => `(
     AND ${alias}.threat_level = 'CLEAR'
   )`;
 
-/**
- * Stands down peers who are en route / on scene of an incident that has just
- * stopped being peer-eligible. Runs as a data-modifying CTE in the SAME
- * statement as the change, so the incident can never be ineligible while a
- * peer is still heading there. Expects a CTE named `changed` with the incident
- * columns peerEligibleSql reads.
- */
 const STAND_DOWN_INELIGIBLE_PEERS = `
        revoked AS (
          UPDATE incident_peer_response p
@@ -66,7 +49,6 @@ const STAND_DOWN_INELIGIBLE_PEERS = `
           RETURNING p.peer_driver_id
        )`;
 
-/** The incident's own columns, with the geography and NUMERIC made readable. */
 const INCIDENT_COLUMNS = `
   i.id, i.driver_id, i.device_id,
   ST_X(i.location::geometry) AS lng, ST_Y(i.location::geometry) AS lat,
@@ -101,11 +83,6 @@ function toIncident(row: IncidentRow): IncidentEntity {
 export class IncidentRepository {
   constructor(private readonly db: DatabaseService) {}
 
-  /**
-   * Inserts the incident and returns its id. threat_level is decided here: an
-   * ASSIST incident (no adversary) starts CLEAR, anything else ACTIVE_THREAT,
-   * which is what the peer-help policy and the wave engine expect.
-   */
   async createIncident(data: CreateIncidentData): Promise<string | null> {
     const {
       driver_id,
@@ -152,23 +129,6 @@ export class IncidentRepository {
     return rows[0]?.id ?? null;
   }
 
-  // ---------------------------------------------------------------------
-  // RESPONDER PROGRESS: these go through incident_responder_assignment.
-  // Triggers move the incident (CLAIMED / EN_ROUTE / ON_SCENE / back to
-  // DISPATCHING) and void the other offers. Patching incident.status
-  // directly leaves the assignment rows out of sync.
-  //
-  // The sync trigger silently skips the incident update when the incident is
-  // not in the expected state (e.g. already ESCALATED), which would leave the
-  // assignment ahead of the incident. So markEnRoute / markArrived also require
-  // the incident to be in the matching state, held by this responder.
-  // ---------------------------------------------------------------------
-
-  /**
-   * A responder claims an offered incident. Resolves true if they won,
-   * false if they lost the race or the offer is no longer open. Throws
-   * (check_violation) if the incident is already closed or cancelled.
-   */
   async claimIncident(
     incidentId: string,
     responderId: string,
@@ -184,7 +144,6 @@ export class IncidentRepository {
     return result.rowCount === 1;
   }
 
-  /** The claimant heads to the scene (CLAIMED -> EN_ROUTE). */
   async markEnRoute(incidentId: string, responderId: string): Promise<boolean> {
     const result = await this.db.query(
       `UPDATE incident_responder_assignment a
@@ -201,11 +160,6 @@ export class IncidentRepository {
     return result.rowCount === 1;
   }
 
-  /**
-   * The claimant is on scene (CLAIMED / EN_ROUTE -> ARRIVED, which moves the
-   * incident to ON_SCENE). The schema requires arrived_at AND the method
-   * together. `confirmedById` is who confirmed it, for manual confirmation.
-   */
   async markArrived(
     incidentId: string,
     responderId: string,
@@ -230,10 +184,6 @@ export class IncidentRepository {
     return result.rowCount === 1;
   }
 
-  /**
-   * The claimant walks away before reaching the scene. The incident goes back
-   * to DISPATCHING for another wave. Not possible once ARRIVED.
-   */
   async standDown(incidentId: string, responderId: string): Promise<boolean> {
     const result = await this.db.query(
       `UPDATE incident_responder_assignment
@@ -246,15 +196,6 @@ export class IncidentRepository {
     return result.rowCount === 1;
   }
 
-  // ---------------------------------------------------------------------
-  // PEERS: a separate table. Never changes the incident.
-  // ---------------------------------------------------------------------
-
-  /**
-   * A nearby rider responds to an incident they were notified about.
-   * Resolves false if this rider was never notified (no row to update).
-   * The database does not stamp responded_at for peers, so it is set here.
-   */
   async recordPeerResponse(
     incidentId: string,
     peerDriverId: string,
@@ -271,19 +212,6 @@ export class IncidentRepository {
     return result.rowCount === 1;
   }
 
-  // ---------------------------------------------------------------------
-  // INCIDENT-LEVEL TRANSITIONS: updates on incident, each with its own
-  // preconditions and a status guard, so a stale caller cannot make a "valid"
-  // move on an incident that has moved on.
-  //
-  // Audit actor: some audit rows read the actor from the session setting
-  // app.current_user_id. Where that matters (cancel, threat level) the
-  // statement sets it itself, scoped to that statement, so no separate
-  // transaction is needed. Multi-table actions (cancel, escalate) are ONE
-  // statement, so they are atomic without a transaction.
-  // ---------------------------------------------------------------------
-
-  /** The claimant asks for independent verification (ON_SCENE -> AWAITING_VERIFICATION). */
   async requestVerification(
     incidentId: string,
     responderId: string,
@@ -299,12 +227,6 @@ export class IncidentRepository {
     return result.rowCount === 1;
   }
 
-  /**
-   * A second person independently verifies the scene outcome (four-eyes).
-   * The verifier must be a responder, admin or super, and can never be the
-   * claimant (also a DB constraint). Does not resolve the incident: call
-   * resolveIncident afterwards.
-   */
   async verifyIncident(
     incidentId: string,
     verifierId: string,
@@ -342,52 +264,61 @@ export class IncidentRepository {
     if (
       row.verifier_role === null ||
       !['responder', 'admin', 'super'].includes(row.verifier_role)
-    ) {
+    )
       return 'forbidden';
-    }
     if (row.claimed_by_id === verifierId) return 'own_claim';
     return 'not_verifiable';
   }
 
   /**
-   * Closes an incident with an outcome. Allowed from ON_SCENE,
-   * AWAITING_VERIFICATION or ESCALATED, by the claimant or an admin/super.
-   * Safety gate (also a DB constraint): ASSIST, or DE_ESCALATABLE once the
-   * scene is DE_ESCALATED/CLEAR, may close directly; everything else needs
-   * verifyIncident first.
-   *
-   * Assignments are deliberately left as they are: the DB notifies the
-   * responders who were CLAIMED/EN_ROUTE/ARRIVED when it resolves, so queries
-   * for "a responder's current incident" must also check the incident is not
-   * RESOLVED/CANCELLED.
+   * Closes an incident and atomically stands down any en_route/on_scene peers.
+   * Returns the result and the ids of the peers that were stood down.
    */
-  async resolveIncident(
+  async resolveIncidentAndStandDownPeers(
     incidentId: string,
     outcome: IncidentOutcome,
     resolvedById: string,
-  ): Promise<ResolveResult> {
-    const result = await this.db.query(
-      `UPDATE incident i
-          SET status = 'RESOLVED',
-              outcome = $2::outcome_enum,
-              resolved_by_id = $3::uuid
-        WHERE i.id = $1::uuid
-          AND i.status IN ('ON_SCENE', 'AWAITING_VERIFICATION', 'ESCALATED')
-          AND $2::outcome_enum <> 'unresolved'
-          AND (i.threat_category = 'ASSIST'
-               OR (i.threat_category = 'DE_ESCALATABLE'
-                   AND i.threat_level IN ('DE_ESCALATED', 'CLEAR'))
-               OR i.verified_at IS NOT NULL)
-          AND (i.claimed_by_id = $3::uuid
-               OR EXISTS (SELECT 1 FROM user_account u
-                           WHERE u.id = $3::uuid
-                             AND u.deleted_at IS NULL
-                             AND u.role IN ('admin', 'super')))`,
+  ): Promise<{ result: ResolveResult; standDownPeerIds: string[] }> {
+    const [row] = await queryRows<{ resolved: number; revoked: string[] }>(
+      this.db,
+      `WITH changed AS (
+         UPDATE incident i
+            SET status = 'RESOLVED',
+                outcome = $2::outcome_enum,
+                resolved_by_id = $3::uuid
+          WHERE i.id = $1::uuid
+            AND i.status IN ('ON_SCENE', 'AWAITING_VERIFICATION', 'ESCALATED')
+            AND $2::outcome_enum <> 'unresolved'
+            AND (i.threat_category = 'ASSIST'
+                 OR (i.threat_category = 'DE_ESCALATABLE'
+                     AND i.threat_level IN ('DE_ESCALATED', 'CLEAR'))
+                 OR i.verified_at IS NOT NULL)
+            AND (i.claimed_by_id = $3::uuid
+                 OR EXISTS (SELECT 1 FROM user_account u
+                             WHERE u.id = $3::uuid
+                               AND u.deleted_at IS NULL
+                               AND u.role IN ('admin', 'super')))
+          RETURNING i.id
+       ),
+       revoked AS (
+         UPDATE incident_peer_response p
+            SET status = 'stood_down',
+                responded_at = COALESCE(p.responded_at, now())
+           FROM changed c
+          WHERE p.incident_id = c.id
+            AND p.status IN ('en_route', 'on_scene')
+          RETURNING p.peer_driver_id
+       )
+       SELECT (SELECT count(*) FROM changed)::int AS resolved,
+              COALESCE((SELECT array_agg(peer_driver_id) FROM revoked), '{}') AS revoked`,
       [incidentId, outcome, resolvedById],
     );
-    if (result.rowCount === 1) return 'resolved';
 
-    const [row] = await queryRows<{
+    if ((row?.resolved ?? 0) > 0) {
+      return { result: 'resolved', standDownPeerIds: row.revoked };
+    }
+
+    const [info] = await queryRows<{
       status: string;
       claimed_by_id: string | null;
       threat_category: string;
@@ -403,29 +334,22 @@ export class IncidentRepository {
         WHERE i.id = $1::uuid`,
       [incidentId, resolvedById],
     );
-    if (!row) return 'not_found';
+    const none: string[] = [];
+    if (!info) return { result: 'not_found', standDownPeerIds: none };
     const mayResolve =
-      row.claimed_by_id === resolvedById ||
-      row.resolver_role === 'admin' ||
-      row.resolver_role === 'super';
-    if (!mayResolve) return 'forbidden';
+      info.claimed_by_id === resolvedById ||
+      info.resolver_role === 'admin' ||
+      info.resolver_role === 'super';
+    if (!mayResolve) return { result: 'forbidden', standDownPeerIds: none };
     if (
-      !['ON_SCENE', 'AWAITING_VERIFICATION', 'ESCALATED'].includes(row.status)
-    ) {
-      return 'not_resolvable';
-    }
-    if ((outcome as string) === 'unresolved') return 'invalid_outcome';
-    return 'needs_verification';
+      !['ON_SCENE', 'AWAITING_VERIFICATION', 'ESCALATED'].includes(info.status)
+    )
+      return { result: 'not_resolvable', standDownPeerIds: none };
+    if ((outcome as string) === 'unresolved')
+      return { result: 'invalid_outcome', standDownPeerIds: none };
+    return { result: 'needs_verification', standDownPeerIds: none };
   }
 
-  /**
-   * Changes how dangerous the scene is. Returns null if the incident is
-   * closed, missing, or already at that level; otherwise the ids of any peers
-   * who were en route / on scene and were stood down because the incident is
-   * no longer peer-eligible (an empty array when none). The stand-down happens
-   * in the SAME statement as the change. `updatedById` is who made the change,
-   * for the audit row (it falls back to the claimant when omitted).
-   */
   async updateThreatLevel(
     incidentId: string,
     level: ThreatLevel,
@@ -443,25 +367,15 @@ export class IncidentRepository {
           WHERE i.id = $1::uuid
             AND i.status NOT IN ('RESOLVED', 'CANCELLED')
             AND i.threat_level IS DISTINCT FROM $2::threat_level_enum
-          RETURNING i.id, i.threat_type, i.threat_category, i.severity,
-                    i.threat_level
+          RETURNING i.id, i.threat_type, i.threat_category, i.severity, i.threat_level
        ),${STAND_DOWN_INELIGIBLE_PEERS}
        SELECT (SELECT count(*) FROM changed)::int AS changed,
-              COALESCE((SELECT array_agg(peer_driver_id) FROM revoked),
-                       '{}') AS revoked`,
+              COALESCE((SELECT array_agg(peer_driver_id) FROM revoked), '{}') AS revoked`,
       [incidentId, level, updatedById ?? null],
     );
     return row && row.changed > 0 ? row.revoked : null;
   }
 
-  /**
-   * Assesses how hurt / how urgent it is (the rider's self-report at creation
-   * can be corrected here). Allowed for the claimant, an admin or a super. If
-   * the new severity makes the incident peer-ineligible (anything but MINOR),
-   * peers who were en route / on scene are stood down in the same statement
-   * and returned so they can be told. Severity changes are not audited by the
-   * database.
-   */
   async updateSeverity(
     incidentId: string,
     severity: IncidentSeverity,
@@ -480,19 +394,16 @@ export class IncidentRepository {
                              WHERE u.id = $3::uuid
                                AND u.deleted_at IS NULL
                                AND u.role IN ('admin', 'super')))
-          RETURNING i.id, i.threat_type, i.threat_category, i.severity,
-                    i.threat_level
+          RETURNING i.id, i.threat_type, i.threat_category, i.severity, i.threat_level
        ),${STAND_DOWN_INELIGIBLE_PEERS}
        SELECT (SELECT count(*) FROM changed)::int AS changed,
-              COALESCE((SELECT array_agg(peer_driver_id) FROM revoked),
-                       '{}') AS revoked`,
+              COALESCE((SELECT array_agg(peer_driver_id) FROM revoked), '{}') AS revoked`,
       [incidentId, severity, updatedById],
     );
     if (row && row.changed > 0) {
       return { result: 'updated', standDownPeerIds: row.revoked };
     }
 
-    // Nothing changed: say why (read-only, only picks the message).
     const [info] = await queryRows<{
       status: string;
       severity: string;
@@ -513,22 +424,11 @@ export class IncidentRepository {
       info.updater_role === 'admin' ||
       info.updater_role === 'super';
     if (!mayUpdate) return { result: 'forbidden', standDownPeerIds: none };
-    if (info.status === 'RESOLVED' || info.status === 'CANCELLED') {
+    if (info.status === 'RESOLVED' || info.status === 'CANCELLED')
       return { result: 'closed', standDownPeerIds: none };
-    }
     return { result: 'unchanged', standDownPeerIds: none };
   }
 
-  /**
-   * Hands the incident to a command center: ONE statement that moves the
-   * incident to ESCALATED and records the escalation row, so a bare status
-   * change can never escalate to nobody. Returns the escalation id, or null if
-   * the incident is missing, closed, or already ESCALATED. Throws (23503) for
-   * an unknown command center, in which case nothing changes.
-   * Re-escalating to a different center means releasing the incident back to
-   * DISPATCHING first (the DB closes the old escalation when it leaves ESCALATED).
-   * `escalatedById` null means the system (the SLA sweeper).
-   */
   async escalateIncident(
     incidentId: string,
     commandCenterId: string,
@@ -562,17 +462,14 @@ export class IncidentRepository {
   }
 
   /**
-   * Cancels an incident (terminal) and, in the same statement, stands down
-   * every active responder (CLAIMED / EN_ROUTE / ARRIVED) so nobody keeps
-   * counting as "on" a cancelled incident. The DB itself only expires the
-   * OFFERED rows. Returns false if the incident is missing or already closed.
-   * `cancelledById` is recorded as the audit actor.
+   * Cancels an incident and atomically stands down both assigned responders
+   * and en_route/on_scene peers in a single statement.
    */
-  async cancelIncident(
+  async cancelIncidentAndStandDownPeers(
     incidentId: string,
     cancelledById?: string | null,
-  ): Promise<boolean> {
-    const rows = await queryRows<{ cancelled: number }>(
+  ): Promise<{ cancelled: boolean; standDownPeerIds: string[] }> {
+    const [row] = await queryRows<{ cancelled: number; revoked: string[] }>(
       this.db,
       `WITH actor AS (
          SELECT set_config('app.current_user_id', COALESCE($2::text, ''), true)
@@ -592,16 +489,26 @@ export class IncidentRepository {
           WHERE a.incident_id = c.id
             AND a.status IN ('CLAIMED', 'EN_ROUTE', 'ARRIVED')
           RETURNING a.id
+       ),
+       revoked AS (
+         UPDATE incident_peer_response p
+            SET status = 'stood_down',
+                responded_at = COALESCE(p.responded_at, now())
+           FROM cancelled c
+          WHERE p.incident_id = c.id
+            AND p.status IN ('en_route', 'on_scene')
+          RETURNING p.peer_driver_id
        )
-       SELECT (SELECT count(*) FROM cancelled)::int AS cancelled`,
+       SELECT (SELECT count(*) FROM cancelled)::int AS cancelled,
+              COALESCE((SELECT array_agg(peer_driver_id) FROM revoked), '{}') AS revoked`,
       [incidentId, cancelledById ?? null],
     );
-    return (rows[0]?.cancelled ?? 0) > 0;
-  }
 
-  // ---------------------------------------------------------------------
-  // READS
-  // ---------------------------------------------------------------------
+    return {
+      cancelled: (row?.cancelled ?? 0) > 0,
+      standDownPeerIds: row?.revoked ?? [],
+    };
+  }
 
   async findIncidentById(incidentId: string): Promise<IncidentEntity | null> {
     const [row] = await queryRows<IncidentRow>(
@@ -610,6 +517,24 @@ export class IncidentRepository {
       [incidentId],
     );
     return row ? toIncident(row) : null;
+  }
+
+  async canUserViewIncident(
+    incidentId: string,
+    userId: string,
+    role: string,
+  ): Promise<boolean> {
+    if (role === 'super') return true;
+    const [row] = await queryRows<{ allowed: boolean }>(
+      this.db,
+      `SELECT (
+         EXISTS (SELECT 1 FROM incident i WHERE i.id = $1::uuid AND (i.driver_id = $2::uuid OR i.claimed_by_id = $2::uuid))
+         OR EXISTS (SELECT 1 FROM incident_responder_assignment a WHERE a.incident_id = $1::uuid AND a.responder_id = $2::uuid AND a.status IN ('OFFERED','CLAIMED','EN_ROUTE','ARRIVED'))
+         OR EXISTS (SELECT 1 FROM incident_escalation e JOIN user_account u ON u.id = $2::uuid WHERE e.incident_id = $1::uuid AND e.closed_at IS NULL AND u.role = 'admin' AND u.command_center_id = e.command_center_id)
+       ) AS allowed`,
+      [incidentId, userId],
+    );
+    return row?.allowed === true;
   }
 
   async findOpenIncidentsByDriver(driverId: string): Promise<IncidentEntity[]> {
@@ -625,12 +550,6 @@ export class IncidentRepository {
     return rows.map(toIncident);
   }
 
-  /**
-   * Incidents in any of the given statuses, newest first, one cursor page at a
-   * time. The open-incident index covers non-terminal statuses only, so
-   * lookups for RESOLVED / CANCELLED lean on the created_at index instead.
-   * Throws InvalidCursorError for a bad cursor.
-   */
   async findIncidentsByStatus(
     statuses: IncidentStatus[],
     { limit, cursor }: PageOptions = {},
@@ -644,8 +563,7 @@ export class IncidentRepository {
 
     const rows = await queryRows<IncidentRowWithCursor>(
       this.db,
-      `SELECT ${INCIDENT_COLUMNS},
-              ${cursorTsSql('i.created_at')} AS ${CURSOR_COLUMN}
+      `SELECT ${INCIDENT_COLUMNS}, ${cursorTsSql('i.created_at')} AS ${CURSOR_COLUMN}
          FROM incident i
         WHERE i.status = ANY($1::incident_status_enum[])
           ${keyset}
@@ -661,14 +579,6 @@ export class IncidentRepository {
     };
   }
 
-  /**
-   * Log rows for a command center: incidents ever escalated to it, or
-   * claimed by one of its responders, newest first, one cursor page at a time.
-   * incident_logs.escalated_command_center_id only shows the LATEST
-   * escalation, so a re-escalated incident would vanish from the first
-   * center's log; hence the history lookup.
-   * Throws InvalidCursorError for a bad cursor.
-   */
   async findIncidentLogsByCommandCenter(
     commandCenterId: string,
     { limit, cursor }: PageOptions = {},
@@ -688,12 +598,8 @@ export class IncidentRepository {
       this.db,
       `SELECT l.*, ${cursorTsSql('l.detected_at')} AS ${CURSOR_COLUMN}
          FROM incident_logs l
-        WHERE (EXISTS (SELECT 1 FROM incident_escalation e
-                        WHERE e.incident_id = l.incident_id
-                          AND e.command_center_id = $1::uuid)
-            OR EXISTS (SELECT 1 FROM user_account u
-                        WHERE u.id = l.claimed_by_id
-                          AND u.command_center_id = $1::uuid))
+        WHERE (EXISTS (SELECT 1 FROM incident_escalation e WHERE e.incident_id = l.incident_id AND e.command_center_id = $1::uuid)
+            OR EXISTS (SELECT 1 FROM user_account u WHERE u.id = l.claimed_by_id AND u.command_center_id = $1::uuid))
           ${keyset}
         ORDER BY l.detected_at DESC, l.incident_id DESC
         LIMIT $${params.length}`,
@@ -710,13 +616,6 @@ export class IncidentRepository {
     };
   }
 
-  // =====================================================================
-  // WAVE DISPATCH & SLA METHODS
-  // =====================================================================
-
-  /**
-   * Checks if an incident is still waiting for a responder (DETECTED or DISPATCHING).
-   */
   async isIncidentUnclaimed(incidentId: string): Promise<boolean> {
     const [row] = await queryRows<{ status: string }>(
       this.db,
@@ -726,38 +625,43 @@ export class IncidentRepository {
     return row?.status === 'DISPATCHING' || row?.status === 'DETECTED';
   }
 
-  /**
-   * Creates a wave record and returns its ID.
-   * Automatically increments the wave number (Wave 1, Wave 2, etc.).
-   */
   async createDispatchWave(
     incidentId: string,
     radiusMeters: number,
   ): Promise<string> {
     const rows = await queryRows<{ id: string }>(
       this.db,
-      `INSERT INTO incident_dispatch_wave (incident_id, wave_number, radius_meters)
-       SELECT 
-         $1::uuid, 
-         COALESCE((SELECT MAX(wave_number) + 1 FROM incident_dispatch_wave WHERE incident_id = $1::uuid), 1),
-         $2::int
+      `WITH next_wave AS (
+         SELECT COALESCE(MAX(wave_number) + 1, 1) AS wave_num 
+         FROM incident_dispatch_wave 
+         WHERE incident_id = $1::uuid
+       )
+       INSERT INTO incident_dispatch_wave (incident_id, wave_number, radius_meters)
+       SELECT $1::uuid, wave_num, $2::int FROM next_wave
+       ON CONFLICT (incident_id, wave_number) DO NOTHING
        RETURNING id`,
       [incidentId, radiusMeters],
     );
-    return rows[0].id;
+
+    if (rows.length > 0) return rows[0].id;
+
+    const [existing] = await queryRows<{ id: string }>(
+      this.db,
+      `SELECT id FROM incident_dispatch_wave 
+       WHERE incident_id = $1::uuid AND radius_meters = $2::int 
+       ORDER BY wave_number DESC LIMIT 1`,
+      [incidentId, radiusMeters],
+    );
+    if (!existing) throw new Error('Failed to create or find dispatch wave');
+    return existing.id;
   }
 
-  /**
-   * Bulk inserts assignment records for a wave.
-   * ON CONFLICT prevents offering the same incident to the same responder twice.
-   */
   async createWaveAssignments(
     incidentId: string,
     waveId: string,
     responders: { user_id: string; distance_meters: number }[],
   ): Promise<void> {
     if (responders.length === 0) return;
-
     const userIds = responders.map((r) => r.user_id);
     const distances = responders.map((r) => r.distance_meters);
 
@@ -771,9 +675,6 @@ export class IncidentRepository {
     );
   }
 
-  /**
-   * Helper to get the first Command Center for SLA Escalation fallback.
-   */
   async findFirstCommandCenterId(): Promise<string | null> {
     const [row] = await queryRows<{ id: string }>(
       this.db,
@@ -783,10 +684,6 @@ export class IncidentRepository {
     return row?.id ?? null;
   }
 
-  /**
-   * Finds incidents that have been stuck in DISPATCHING for too long.
-   * Used by the SLA Sweeper to catch cases where the server restarted and lost the timers.
-   */
   async findOrphanedIncidents(thresholdSeconds: number): Promise<string[]> {
     const rows = await queryRows<{ id: string }>(
       this.db,
@@ -797,6 +694,39 @@ export class IncidentRepository {
       [thresholdSeconds],
     );
     return rows.map((r) => r.id);
+  }
+
+  /**
+   * Incidents whose claimant has stalled (CLAIMED or EN_ROUTE for too long).
+   * Used by the SLA sweeper to break the deadlock.
+   */
+  async findStalledClaims(thresholdSeconds: number): Promise<string[]> {
+    const rows = await queryRows<{ id: string }>(
+      this.db,
+      `SELECT id FROM incident
+        WHERE status IN ('CLAIMED', 'EN_ROUTE')
+          AND claimed_at < NOW() - INTERVAL '1 second' * $1
+        LIMIT 10`,
+      [thresholdSeconds],
+    );
+    return rows.map((r) => r.id);
+  }
+
+  /**
+   * Full incident rows still in DISPATCHING, used by the wave engine's
+   * startup recovery to re-arm timers after a process restart.
+   */
+  async findDispatchingIncidents(): Promise<IncidentEntity[]> {
+    const rows = await queryRows<IncidentRow>(
+      this.db,
+      `SELECT ${INCIDENT_COLUMNS}
+         FROM incident i
+        WHERE i.status = 'DISPATCHING'
+          AND i.created_at > NOW() - INTERVAL '5 minutes'
+        ORDER BY i.created_at ASC`,
+      [],
+    );
+    return rows.map(toIncident);
   }
 
   async filterOnDutyResponders(userIds: string[]): Promise<string[]> {
@@ -814,9 +744,6 @@ export class IncidentRepository {
     return rows.map((r) => r.user_id);
   }
 
-  /**
-   * Same as filterOnDutyResponders, but for drivers.
-   */
   async filterOnDutyDrivers(userIds: string[]): Promise<string[]> {
     if (userIds.length === 0) return [];
     const rows = await queryRows<{ user_id: string }>(

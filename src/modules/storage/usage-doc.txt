@@ -1,0 +1,105 @@
+# Storage Module - R2 Evidence Upload Usage Guide
+
+## Overview
+Storage module provides presigned URL generation for direct client-to-Cloudflare R2 uploads.
+Server never handles file bytes - clients upload directly to R2.
+
+## Evidence Upload Flow
+
+### 1. Multipart Upload for Large Files (Video Evidence)
+**Use for**: Video evidence > 100MB
+
+```http
+POST /storage/evidence/multipart/initiate?incidentId={uuid}
+Body: {
+  "contentType": "video/mp4",
+  "fileName": "front_camera.mp4"
+}
+Response: {
+  "uploadId": "abc123",
+  "objectKey": "incidents/{incidentId}/evidence_{user}_{timestamp}.mp4"
+}
+```
+
+```http
+POST /storage/evidence/multipart/sign-parts
+Body: {
+  "key": "incidents/...",
+  "uploadId": "abc123",
+  "partNumbers": [1,2,3,4,5]
+}
+Response: {
+  "urls": [
+    {"partNumber": 1, "url": "https://..."},
+    ...
+  ]
+}
+```
+
+Client PUTs each chunk to its URL, then:
+
+```http
+POST /storage/evidence/multipart/complete
+Body: {
+  "key": "incidents/...",
+  "uploadId": "abc123",
+  "parts": [
+    {"ETag": "\"abc\"", "PartNumber": 1},
+    ...
+  ]
+}
+```
+
+### 2. Single PUT for Small Files
+**Use for**: Profile images, small photos
+
+```http
+POST /storage/profile-image/upload-url
+Body: {
+  "contentType": "image/jpeg",
+  "fileSize": 248320
+}
+Response: {
+  "uploadUrl": "https://...",
+  "objectKey": "users/{userId}/avatar.jpg"
+}
+```
+
+Client PUTs file directly to uploadUrl.
+
+### 3. Link Evidence to Incident
+After upload completes, create incident with evidence key:
+
+```http
+POST /incidents
+Body: {
+  "trigger_source": "EDGE_AI",
+  "location": {"longitude": 121.0, "latitude": 14.6},
+  "threat_type": "COLLISION",
+  "threat_category": "HAZARD",
+  "evidence": [{
+    "key": "incidents/{incidentId}/evidence_...",
+    "view": "front",
+    "type": "video"
+  }]
+}
+```
+
+Server will enrich metadata via HeadObject:
+- content_type, size_bytes, uploaded_at, r2_etag
+
+### 4. Download Evidence
+```http
+GET /storage/download-url?key=incidents/...&bucket=evidence
+Response: {"downloadUrl": "https://... (1hr TTL)"}
+```
+
+## Buckets
+- R2_BUCKET_EVIDENCES: incident videos/photos
+- R2_BUCKET_PROFILE_IMAGES: user avatars
+
+## Security
+- All uploads require JWT auth
+- Presigned URLs expire in 15min (single) / 1hr (multipart parts)
+- Server validates key prefix on incident creation
+- Evidence metadata enriched server-side via HeadObject, never trusted from client

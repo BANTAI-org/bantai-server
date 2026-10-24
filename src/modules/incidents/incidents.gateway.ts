@@ -16,6 +16,7 @@ import {
   type IncidentEscalatedEvent,
   IncidentEvents,
   type IncidentPeerRespondedEvent,
+  type IncidentPeerStandDownEvent,
   type IncidentStatusChangedEvent,
   type IncidentThreatLevelChangedEvent,
   type IncidentTrackingUpdatedEvent,
@@ -136,6 +137,15 @@ export class IncidentGateway implements OnGatewayInit, OnGatewayConnection {
     this.emit(rooms, IncidentEvents.PEER_RESPONDED, event);
   }
 
+  @OnEvent(IncidentEvents.PEER_STAND_DOWN)
+  onPeerStandDown(event: IncidentPeerStandDownEvent): void {
+    this.emit(
+      [Rooms.user(event.peerDriverId)],
+      IncidentEvents.PEER_STAND_DOWN,
+      event,
+    );
+  }
+
   @OnEvent(IncidentEvents.TRACKING_UPDATED)
   onTrackingUpdated(event: IncidentTrackingUpdatedEvent): void {
     this.emit(
@@ -158,10 +168,6 @@ export class IncidentGateway implements OnGatewayInit, OnGatewayConnection {
     }
   }
 
-  // ---------------------------------------------------------------------
-  // WAVE DISPATCH EVENTS
-  // ---------------------------------------------------------------------
-
   @OnEvent('wave.issued')
   onWaveIssued(event: {
     incidentId: string;
@@ -179,10 +185,6 @@ export class IncidentGateway implements OnGatewayInit, OnGatewayConnection {
       });
     }
   }
-
-  // ---------------------------------------------------------------------
-  // REPORT EVENTS
-  // ---------------------------------------------------------------------
 
   @OnEvent(ReportEvents.STATUS_CHANGED)
   onReportStatusChanged(event: ReportStatusChangedEvent): void {
@@ -212,7 +214,9 @@ export class IncidentGateway implements OnGatewayInit, OnGatewayConnection {
 
     const payload = await this.jwt.verifyAsync<JwtPayload & { exp?: number }>(
       token,
-      { secret: this.config.getOrThrow<string>('JWT_SECRET') },
+      {
+        secret: this.config.getOrThrow<string>('JWT_SECRET'),
+      },
     );
     if (typeof payload.sub !== 'string' || !payload.role) {
       throw new Error('not an access token');

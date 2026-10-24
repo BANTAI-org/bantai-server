@@ -328,11 +328,13 @@ export class IncidentService {
     outcome: IncidentOutcome,
     resolvedById: string,
   ): Promise<void> {
-    const result: string = await this.incidentRepository.resolveIncident(
-      incidentId,
-      outcome,
-      resolvedById,
-    );
+    const { result, standDownPeerIds } =
+      await this.incidentRepository.resolveIncidentAndStandDownPeers(
+        incidentId,
+        outcome,
+        resolvedById,
+      );
+
     switch (result) {
       case 'resolved':
         break;
@@ -353,6 +355,12 @@ export class IncidentService {
       default:
         throw new ConflictException('This incident cannot be resolved now');
     }
+
+    await this.announcePeerStandDown(
+      incidentId,
+      standDownPeerIds,
+      'incident_closed',
+    );
     await this.announceStatus(incidentId);
   }
 
@@ -486,13 +494,21 @@ export class IncidentService {
     incidentId: string,
     cancelledById: string | null,
   ): Promise<void> {
-    const ok = await this.incidentRepository.cancelIncident(
-      incidentId,
-      cancelledById,
-    );
-    if (!ok) {
+    const { cancelled, standDownPeerIds } =
+      await this.incidentRepository.cancelIncidentAndStandDownPeers(
+        incidentId,
+        cancelledById,
+      );
+
+    if (!cancelled) {
       throw new ConflictException('Incident not found or already closed');
     }
+
+    await this.announcePeerStandDown(
+      incidentId,
+      standDownPeerIds,
+      'incident_closed',
+    );
     await this.announceStatus(incidentId);
   }
 
@@ -500,6 +516,20 @@ export class IncidentService {
     const incident = await this.incidentRepository.findIncidentById(incidentId);
     if (!incident) throw new NotFoundException('Incident not found');
     return incident;
+  }
+
+  async getIncidentForUser(
+    incidentId: string,
+    userId: string,
+    role: Role,
+  ): Promise<IncidentEntity> {
+    const allowed = await this.incidentRepository.canUserViewIncident(
+      incidentId,
+      userId,
+      role,
+    );
+    if (!allowed) throw new ForbiddenException('You cannot view this incident');
+    return this.getIncident(incidentId);
   }
 
   listIncidentsByStatus(
@@ -732,15 +762,10 @@ export class IncidentService {
     );
   }
 
-  // =====================================================================
-  // LISTENERS
-  // =====================================================================
-
   @OnEvent('incident.sla_timeout')
   async handleSlaTimeout(event: { incidentId: string }): Promise<void> {
     try {
       const ccId = await this.incidentRepository.findFirstCommandCenterId();
-
       if (!ccId) {
         this.logger.error('No command center exists to escalate to.');
         return;
@@ -750,7 +775,7 @@ export class IncidentService {
         event.incidentId,
         ccId,
         EscalationReason.SLA_TIMEOUT,
-        null, // null means the system escalated it
+        null,
         'Auto-escalated: No responder claimed within 60 seconds.',
       );
 
@@ -764,10 +789,6 @@ export class IncidentService {
       );
     }
   }
-
-  // =====================================================================
-  // INTERNALS
-  // =====================================================================
 
   private async withValidCursor<T>(read: () => Promise<T>): Promise<T> {
     try {

@@ -19,7 +19,7 @@ export const IncidentEvents = {
   SEVERITY_CHANGED: 'incident.severity_changed',
   /** Sent to ONE rider: stop heading to / leave the scene. */
   PEER_STAND_DOWN: 'incident.peer_stand_down',
-  TRACKING_UPDATED: 'incident.tracking_updated', // ← NEW
+  TRACKING_UPDATED: 'incident.tracking_updated',
 } as const;
 
 export const ReportEvents = {
@@ -81,7 +81,8 @@ export interface IncidentSeverityChangedEvent extends IncidentEventBase {
 }
 
 /** Why a peer who was heading to (or at) the scene is being told to stand down. */
-export type PeerStandDownReason = 'severity_changed' | 'threat_level_changed';
+export type PeerStandDownReason =
+  'severity_changed' | 'threat_level_changed' | 'incident_closed';
 
 /**
  * Deliberately NOT based on IncidentEventBase: it goes to a single peer, so it

@@ -46,12 +46,6 @@ import {
 
 const ANY_USER = [Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER];
 
-/**
- * The caller's id is always `@CurrentUser('sub')` from the verified token:
- * responder, verifier, resolver and peer ids are never read from the body or
- * the URL. Finer rules (is this responder the claimant, four-eyes verification)
- * live in the repository SQL and the service.
- */
 @Controller('incidents')
 @UseGuards(JwtGuard, RolesGuard)
 @ApiTags('Incidents')
@@ -59,15 +53,6 @@ const ANY_USER = [Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER];
 export class IncidentController {
   constructor(private readonly incidentService: IncidentService) {}
 
-  // ---------------------------------------------------------------------
-  // CREATE
-  // ---------------------------------------------------------------------
-
-  /**
-   * A rider raises an SOS (MANUAL_SOS), or a command center logs a walk-in
-   * report (CENTER_MANUAL). EDGE_AI and CRASH_IMU incidents come from the
-   * hardware pipeline, but can be relayed via the rider's authenticated app.
-   */
   @Post()
   @ApiOperation({ summary: 'Create an incident' })
   @ApiBody({ type: CreateIncidentDto })
@@ -85,10 +70,7 @@ export class IncidentController {
 
     let resolvedDriverId: string | null = null;
     if (role === Role.DRIVER) {
-      // Allow the driver's app to relay telemetry from the Pi (CRASH_IMU)
-      // or the KVM/Edge pipeline (EDGE_AI).
       const allowedSources = ['MANUAL_SOS', 'CRASH_IMU', 'EDGE_AI'];
-
       if (!allowedSources.includes(source)) {
         throw new ForbiddenException(
           'Riders can only raise SOS, IMU crash, or Edge AI incidents',
@@ -105,10 +87,6 @@ export class IncidentController {
       id: await this.incidentService.createIncident(dto, resolvedDriverId),
     };
   }
-
-  // ---------------------------------------------------------------------
-  // READS (the fixed paths come before :incidentId so "logs" is not an id)
-  // ---------------------------------------------------------------------
 
   @Get()
   @ApiOperation({ summary: 'List incidents by status' })
@@ -147,10 +125,6 @@ export class IncidentController {
     return this.incidentService.findOpenIncidentsByDriver(driverId);
   }
 
-  /**
-   * A command center's incident log. An admin sees their own center whatever
-   * they ask for; a super has to name one.
-   */
   @Get('logs')
   @ApiOperation({ summary: 'List incident logs for a command center' })
   @ApiQuery({ name: 'command_center_id', required: false, type: String })
@@ -169,16 +143,14 @@ export class IncidentController {
     let commandCenterId: string | undefined;
     if (role === Role.SUPER) {
       commandCenterId = query.command_center_id;
-      if (!commandCenterId) {
+      if (!commandCenterId)
         throw new BadRequestException('command_center_id is required');
-      }
     } else {
       commandCenterId = ownCommandCenterId;
-      if (!commandCenterId) {
+      if (!commandCenterId)
         throw new ForbiddenException(
           'You are not assigned to a command center',
         );
-      }
     }
 
     const page = await this.incidentService.listIncidentLogs(commandCenterId, {
@@ -188,11 +160,6 @@ export class IncidentController {
     return CursorPageResponseDto.from(page, (log) => log);
   }
 
-  /**
-   * One incident: a super, the rider it belongs to, or the responder who
-   * claimed it. Responders who were only offered it, and admins of an
-   * escalated-to center, are not covered yet (needs a repository lookup).
-   */
   @Get(':incidentId')
   @ApiOperation({ summary: 'Get an incident by ID' })
   @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
@@ -206,18 +173,12 @@ export class IncidentController {
     @CurrentUser('sub') userId: string,
     @CurrentUser('role') role: Role,
   ): Promise<IncidentEntity> {
-    const incident = await this.incidentService.getIncident(params.incidentId);
-    const allowed =
-      role === Role.SUPER ||
-      incident.driver_id === userId ||
-      incident.claimed_by_id === userId;
-    if (!allowed) throw new ForbiddenException('You cannot view this incident');
-    return incident;
+    return this.incidentService.getIncidentForUser(
+      params.incidentId,
+      userId,
+      role,
+    );
   }
-
-  // ---------------------------------------------------------------------
-  // RESPONDER PROGRESS
-  // ---------------------------------------------------------------------
 
   @Post(':incidentId/claim')
   @ApiOperation({ summary: 'Claim an incident' })
@@ -251,7 +212,6 @@ export class IncidentController {
     await this.incidentService.markEnRoute(params.incidentId, userId);
   }
 
-  /** For 'manual' arrival the confirming user is the caller; for 'gps' nobody. */
   @Post(':incidentId/arrived')
   @ApiOperation({ summary: 'Record responder arrival at an incident' })
   @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
@@ -293,11 +253,6 @@ export class IncidentController {
     await this.incidentService.standDown(params.incidentId, userId);
   }
 
-  // ---------------------------------------------------------------------
-  // PEERS
-  // ---------------------------------------------------------------------
-
-  /** A nearby rider answers an alert they were sent. */
   @Post(':incidentId/peer-response')
   @ApiOperation({ summary: 'Submit a peer response to an incident alert' })
   @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
@@ -320,10 +275,6 @@ export class IncidentController {
       dto.status,
     );
   }
-
-  // ---------------------------------------------------------------------
-  // VERIFY / RESOLVE
-  // ---------------------------------------------------------------------
 
   @Post(':incidentId/request-verification')
   @ApiOperation({ summary: 'Request incident verification' })
@@ -387,11 +338,6 @@ export class IncidentController {
     );
   }
 
-  // ---------------------------------------------------------------------
-  // ASSESSMENT / ESCALATION / CANCEL
-  // ---------------------------------------------------------------------
-
-  /** The claimant, an admin or a super. */
   @Patch(':incidentId/threat-level')
   @ApiOperation({ summary: 'Update an incident threat level' })
   @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
@@ -417,7 +363,6 @@ export class IncidentController {
     );
   }
 
-  /** The claimant, an admin or a super (the repository enforces which). */
   @Patch(':incidentId/severity')
   @ApiOperation({ summary: 'Update an incident severity' })
   @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
@@ -441,7 +386,6 @@ export class IncidentController {
     );
   }
 
-  /** The claimant, an admin or a super. Returns the escalation id. */
   @Post(':incidentId/escalate')
   @ApiOperation({ summary: 'Escalate an incident to another command center' })
   @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
@@ -469,7 +413,6 @@ export class IncidentController {
     return { id };
   }
 
-  /** The rider cancels their own SOS; an admin or a super can cancel any. */
   @Post(':incidentId/cancel')
   @ApiOperation({ summary: 'Cancel an incident' })
   @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
@@ -495,12 +438,6 @@ export class IncidentController {
     await this.incidentService.cancelIncident(params.incidentId, userId);
   }
 
-  // ---------------------------------------------------------------------
-
-  /**
-   * Admins and supers always pass. A responder passes only for an incident
-   * they claimed (one extra read: these routes are rare, so it is fine).
-   */
   private async requireStaffOrClaimant(
     incidentId: string,
     userId: string,
