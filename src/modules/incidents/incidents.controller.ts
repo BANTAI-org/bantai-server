@@ -6,6 +6,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Param,
   Patch,
   Post,
@@ -123,6 +124,48 @@ export class IncidentController {
     @CurrentUser('sub') driverId: string,
   ): Promise<IncidentEntity[]> {
     return this.incidentService.findOpenIncidentsByDriver(driverId);
+  }
+
+  @Get('assignment/current')
+  @ApiOperation({
+    summary: 'Get current active assignment for the authenticated responder',
+  })
+  @ApiResponse({ status: 200, description: 'Current assignment returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'No active assignment' })
+  @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
+  async getCurrentAssignment(
+    @CurrentUser('sub') responderId: string,
+  ): Promise<IncidentEntity> {
+    const assignment =
+      await this.incidentService.getCurrentAssignment(responderId);
+    if (!assignment) {
+      throw new NotFoundException('No active assignment');
+    }
+    return assignment;
+  }
+
+  @Get('assignment/history')
+  @ApiOperation({
+    summary: 'Get assignment history for the authenticated responder',
+  })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'offset', required: false, type: Number })
+  @ApiResponse({ status: 200, description: 'Assignment history returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
+  async getAssignmentHistory(
+    @CurrentUser('sub') responderId: string,
+    @Query('limit') limit?: number,
+    @Query('offset') offset?: number,
+  ): Promise<IncidentEntity[]> {
+    return this.incidentService.getAssignmentHistory(
+      responderId,
+      limit ?? 50,
+      offset ?? 0,
+    );
   }
 
   @Get('logs')

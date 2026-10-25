@@ -550,6 +550,40 @@ export class IncidentRepository {
     return rows.map(toIncident);
   }
 
+  async findCurrentAssignment(
+    responderId: string,
+  ): Promise<IncidentEntity | null> {
+    const [row] = await queryRows<IncidentRow>(
+      this.db,
+      `SELECT ${INCIDENT_COLUMNS}
+       FROM incident i
+      WHERE i.claimed_by_id = $1::uuid
+        AND i.status IN ('CLAIMED', 'EN_ROUTE', 'ON_SCENE', 'AWAITING_VERIFICATION', 'ESCALATED')
+      ORDER BY i.claimed_at DESC, i.id DESC
+      LIMIT 1`,
+      [responderId],
+    );
+    return row ? toIncident(row) : null;
+  }
+
+  async findAssignmentHistory(
+    responderId: string,
+    limit: number,
+    offset: number,
+  ): Promise<IncidentEntity[]> {
+    const rows = await queryRows<IncidentRow>(
+      this.db,
+      `SELECT ${INCIDENT_COLUMNS}
+       FROM incident i
+      WHERE i.claimed_by_id = $1::uuid
+        AND i.status IN ('RESOLVED', 'CANCELLED', 'CLAIMED', 'EN_ROUTE', 'ON_SCENE', 'AWAITING_VERIFICATION', 'ESCALATED')
+      ORDER BY i.claimed_at DESC, i.id DESC
+      LIMIT $2 OFFSET $3`,
+      [responderId, limit, offset],
+    );
+    return rows.map(toIncident);
+  }
+
   async findIncidentsByStatus(
     statuses: IncidentStatus[],
     { limit, cursor }: PageOptions = {},

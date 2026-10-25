@@ -199,6 +199,24 @@ export class IncidentService {
     return this.incidentRepository.findOpenIncidentsByDriver(driverId);
   }
 
+  async getCurrentAssignment(
+    responderId: string,
+  ): Promise<IncidentEntity | null> {
+    return this.incidentRepository.findCurrentAssignment(responderId);
+  }
+
+  async getAssignmentHistory(
+    responderId: string,
+    limit: number,
+    offset: number,
+  ): Promise<IncidentEntity[]> {
+    return this.incidentRepository.findAssignmentHistory(
+      responderId,
+      limit,
+      offset,
+    );
+  }
+
   async markArrived(
     incidentId: string,
     responderId: string,
