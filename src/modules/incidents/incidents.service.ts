@@ -156,6 +156,40 @@ export class IncidentService {
     return incidentId;
   }
 
+  /**
+   * Creates an incident from an Edge AI / KVM webhook.
+   * Resolves the paired driver from either a device UUID or hardware serial,
+   * then delegates to the normal createIncident flow.
+   */
+  async createEdgeIncident(dto: CreateIncidentDto): Promise<string> {
+    const identifier = dto.device_id || dto.hardware_serial;
+
+    if (!identifier) {
+      throw new BadRequestException(
+        'Either device_id or hardware_serial is required',
+      );
+    }
+
+    const deviceData =
+      await this.incidentRepository.getDeviceAndDriver(identifier);
+
+    if (!deviceData) {
+      throw new BadRequestException(
+        'Device not found or is not currently paired',
+      );
+    }
+
+    if (!deviceData.driverId) {
+      throw new BadRequestException('Device is not paired with a driver');
+    }
+
+    // Force the resolved UUID so the downstream INSERT works
+    dto.device_id = deviceData.deviceId;
+
+    // Delegate to the standard createIncident with the resolved driver
+    return this.createIncident(dto, deviceData.driverId);
+  }
+
   async claimIncident(incidentId: string, responderId: string): Promise<void> {
     let won: boolean;
     try {

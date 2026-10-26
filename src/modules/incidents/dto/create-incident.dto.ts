@@ -16,6 +16,8 @@ import {
   ValidationArguments,
   ValidatorConstraint,
   ValidatorConstraintInterface,
+  IsString,
+  IsNotEmpty,
 } from 'class-validator';
 import { GeoPoint } from '../../../common/interfaces/geo-location.interface';
 import { IncidentSeverity } from '../enums/incident-severity.enum';
@@ -24,12 +26,7 @@ import { ThreatType } from '../enums/threat-type.enum';
 import { TriggerSource } from '../enums/trigger-source.enum';
 import { IncidentEvidenceItemDto } from './evidence-item.dto';
 import { ApiProperty } from '@nestjs/swagger';
-/**
- * Request shape of a location. Must stay compatible with the shared GeoPoint.
- * @IsNumber first: IsLongitude / IsLatitude alone also accept numeric STRINGS
- * ("121.03"), which would reach the repository typed as number but be a string.
- * (GeoPointDTO in geo-point.dto.ts is the same shape; consider keeping one.)
- */
+
 export class LocationDto implements GeoPoint {
   @ApiProperty({
     description: 'Longitude of the incident location',
@@ -48,23 +45,6 @@ export class LocationDto implements GeoPoint {
   latitude!: number;
 }
 
-/**
- * Cross-field rules on a new incident, checked up front so the client gets a
- * 400 with a readable reason instead of a raw check_violation.
- *
- * Enforced by the database too:
- *   - chck_incident_edge_ai_confidence   EDGE_AI needs confidence_level
- *   - chck_incident_weapon_is_hazard     GUN / BLADE must be HAZARD
- *   - chck_incident_confrontation_not_assist
- *
- * App rules (stricter than the database):
- *   - confidence_level is omitted for human-raised incidents
- *   - EDGE_AI needs device_id: the rider is resolved from the device's active
- *     pairing, and without a rider chck_incident_driver_required fails
- *   - driver_id is only accepted on CENTER_MANUAL; for every other source it
- *     comes from the authenticated rider or the device pairing, so a client
- *     that sends one gets a 400 instead of being silently ignored
- */
 @ValidatorConstraint({ name: 'incidentCrossFieldRules', async: false })
 class IncidentCrossFieldRules implements ValidatorConstraintInterface {
   private violations(o: CreateIncidentDto): string[] {
@@ -75,6 +55,8 @@ class IncidentCrossFieldRules implements ValidatorConstraintInterface {
     const hasConfidence =
       o.confidence_level !== undefined && o.confidence_level !== null;
     const hasDevice = o.device_id !== undefined && o.device_id !== null;
+    const hasSerial =
+      o.hardware_serial !== undefined && o.hardware_serial !== null;
     const hasDriver = o.driver_id !== undefined && o.driver_id !== null;
 
     if (source === 'EDGE_AI' && !hasConfidence) {
@@ -83,8 +65,10 @@ class IncidentCrossFieldRules implements ValidatorConstraintInterface {
     if (source !== 'EDGE_AI' && hasConfidence) {
       out.push('confidence_level must be omitted for human-raised incidents');
     }
-    if (source === 'EDGE_AI' && !hasDevice) {
-      out.push('device_id is required when trigger_source is EDGE_AI');
+    if (source === 'EDGE_AI' && !hasDevice && !hasSerial) {
+      out.push(
+        'device_id or hardware_serial is required when trigger_source is EDGE_AI',
+      );
     }
     if (source !== 'CENTER_MANUAL' && hasDriver) {
       out.push(
@@ -113,17 +97,6 @@ class IncidentCrossFieldRules implements ValidatorConstraintInterface {
   }
 }
 
-/**
- * Body for creating an incident. Maps to CreateIncidentData.
- *
- * driver_id is deliberately NOT a free client field for most sources: for
- * MANUAL_SOS take it from the authenticated rider, for EDGE_AI resolve it from
- * the device's active pairing. It is only accepted here so a command center can
- * link a registered rider on a CENTER_MANUAL report (omit it for a walk-in);
- * any other trigger_source that sends one is rejected (see the rules above).
- * An EDGE_AI device with no active pairing cannot be resolved to a rider: the
- * service must answer that itself (409/422), it is not visible in this DTO.
- */
 export class CreateIncidentDto {
   @ApiProperty({
     enum: TriggerSource,
@@ -160,7 +133,6 @@ export class CreateIncidentDto {
   @IsEnum(ThreatCategory)
   threat_category!: ThreatCategory;
 
-  /** 0..1, NUMERIC(5,4). Required for EDGE_AI, omitted otherwise. */
   @ApiProperty({
     required: false,
     description:
@@ -175,12 +147,23 @@ export class CreateIncidentDto {
 
   @ApiProperty({
     required: false,
-    description: 'Source device UUID; required for EDGE_AI incidents',
+    description: 'Source device UUID; used for EDGE_AI incidents',
     example: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
   })
   @IsOptional()
   @IsUUID()
   device_id?: string | null;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Source device Hardware Serial; used for EDGE_AI if device_id is omitted',
+    example: 'KVM-YOLO-QUEZON-CITY-01',
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  hardware_serial?: string | null;
 
   @ApiProperty({
     required: false,
@@ -191,7 +174,6 @@ export class CreateIncidentDto {
   @IsUUID()
   driver_id?: string | null;
 
-  /** Defaults to UNKNOWN in the database when omitted. */
   @ApiProperty({
     required: false,
     enum: IncidentSeverity,
@@ -202,7 +184,6 @@ export class CreateIncidentDto {
   @IsEnum(IncidentSeverity)
   severity?: IncidentSeverity;
 
-  /** Defaults to []. Max 100 items (database limit). */
   @ApiProperty({
     required: false,
     type: () => [IncidentEvidenceItemDto],

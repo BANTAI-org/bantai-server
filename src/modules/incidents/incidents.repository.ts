@@ -270,10 +270,6 @@ export class IncidentRepository {
     return 'not_verifiable';
   }
 
-  /**
-   * Closes an incident and atomically stands down any en_route/on_scene peers.
-   * Returns the result and the ids of the peers that were stood down.
-   */
   async resolveIncidentAndStandDownPeers(
     incidentId: string,
     outcome: IncidentOutcome,
@@ -461,10 +457,6 @@ export class IncidentRepository {
     return rows[0]?.id ?? null;
   }
 
-  /**
-   * Cancels an incident and atomically stands down both assigned responders
-   * and en_route/on_scene peers in a single statement.
-   */
   async cancelIncidentAndStandDownPeers(
     incidentId: string,
     cancelledById?: string | null,
@@ -508,6 +500,26 @@ export class IncidentRepository {
       cancelled: (row?.cancelled ?? 0) > 0,
       standDownPeerIds: row?.revoked ?? [],
     };
+  }
+
+  /**
+   * Looks up a paired device by either its UUID or its hardware serial.
+   * Returns the resolved UUID and the paired driver.
+   */
+  async getDeviceAndDriver(
+    identifier: string,
+  ): Promise<{ deviceId: string; driverId: string | null } | null> {
+    const [row] = await queryRows<{ id: string; driver_id: string | null }>(
+      this.db,
+      `SELECT id, driver_id 
+         FROM device 
+        WHERE (id::text = $1 OR hardware_serial = $1) 
+          AND status = 'paired'`,
+      [identifier],
+    );
+
+    if (!row) return null;
+    return { deviceId: row.id, driverId: row.driver_id };
   }
 
   async findIncidentById(incidentId: string): Promise<IncidentEntity | null> {
@@ -745,10 +757,6 @@ export class IncidentRepository {
     return rows.map((r) => r.id);
   }
 
-  /**
-   * Incidents whose claimant has stalled (CLAIMED or EN_ROUTE for too long).
-   * Used by the SLA sweeper to break the deadlock.
-   */
   async findStalledClaims(thresholdSeconds: number): Promise<string[]> {
     const rows = await queryRows<{ id: string }>(
       this.db,
@@ -761,10 +769,6 @@ export class IncidentRepository {
     return rows.map((r) => r.id);
   }
 
-  /**
-   * Full incident rows still in DISPATCHING, used by the wave engine's
-   * startup recovery to re-arm timers after a process restart.
-   */
   async findDispatchingIncidents(): Promise<IncidentEntity[]> {
     const rows = await queryRows<IncidentRow>(
       this.db,

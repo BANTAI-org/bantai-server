@@ -36,6 +36,9 @@ import { IncidentService } from './incidents.service';
 import { IncidentEntity } from './interfaces/incident-entity.interface';
 import { IncidentLogEntity } from './interfaces/incident-log-entity.interface';
 import { IncidentStatus } from './enums/incident-status.enum';
+import { TriggerSource } from './enums/trigger-source.enum';
+import { EdgeApiKeyGuard } from '../../common/guards/edge-api-key-guard';
+import { Public } from '../../common/decorators/public.decorator';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -54,6 +57,33 @@ const ANY_USER = [Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER];
 @ApiBearerAuth('access-token')
 export class IncidentController {
   constructor(private readonly incidentService: IncidentService) {}
+
+  // =====================================================================
+  // EDGE AI / KVM WEBHOOK
+  // MUST BE PLACED BEFORE @Get(':incidentId') so Nest matches it correctly
+  // =====================================================================
+  @Post('edge')
+  @Public() // Bypasses the class-level JwtGuard
+  @UseGuards(EdgeApiKeyGuard) // Protects with the API Key
+  @ApiOperation({
+    summary: 'Create an incident from an Edge AI KVM',
+    description:
+      'Accepts either `device_id` (UUID) or `hardware_serial` (String).',
+  })
+  @ApiResponse({ status: 201, description: 'Incident created' })
+  @ApiResponse({ status: 401, description: 'Invalid Edge API Key' })
+  async createEdgeIncident(
+    @Body() dto: CreateIncidentDto,
+  ): Promise<{ id: string }> {
+    dto.trigger_source = TriggerSource.EDGE_AI;
+    return {
+      id: await this.incidentService.createEdgeIncident(dto),
+    };
+  }
+
+  // =====================================================================
+  // NORMAL ROUTES (Protected by JWT)
+  // =====================================================================
 
   @Post()
   @ApiOperation({ summary: 'Create an incident' })
