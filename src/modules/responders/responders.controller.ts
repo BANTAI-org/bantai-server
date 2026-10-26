@@ -18,6 +18,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/role.decorator';
 import { ApiRoles } from '../../common/decorators/api-roles.decorator';
 import { Role } from '../../common/enums/role-enum';
+import { AvailabilityStatusEnum } from './enums/availability-status.enum';
 import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { AuthTokens } from '../auth/interfaces/auth-token.interface';
 import { ResponderService } from './responders.service';
@@ -262,5 +263,25 @@ export class RespondersController {
     @CurrentUser('sub') userId: string,
   ): Promise<DutyChangeResponse> {
     return this.responderService.goOffDuty(userId);
+  }
+
+  @Get('availability')
+  @ApiOperation({
+    summary: 'Fetch current availability status and shift expiry',
+  })
+  @ApiResponse({ status: 200, description: 'Responder availability returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
+  async getAvailability(@CurrentUser('sub') userId: string): Promise<{
+    availability: AvailabilityStatusEnum;
+    isOnDuty: boolean;
+    shiftEndsAt: string | null;
+    shiftSecondsLeft: number | null;
+    dutyStatus: string | null;
+  }> {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
+    return await this.responderService.getCurrentAvailability(userId);
   }
 }

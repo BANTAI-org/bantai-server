@@ -471,6 +471,46 @@ export class ResponderService {
   }
 
   /**
+   * Fetch current availability status and remaining shift time.
+   * Returns availability enum and seconds left until shift ends (null if off duty).
+   */
+  async getCurrentAvailability(userId: string) {
+    const profile = await this.responderRepository.findProfileById(userId);
+    if (!profile) {
+      throw new NotFoundException('Responder profile not found');
+    }
+
+    const now = new Date();
+    let shiftSecondsLeft: number | null = null;
+    let isOnDuty = false;
+
+    if (
+      profile.availability === AvailabilityStatusEnum.ON_DUTY &&
+      profile.shift_ends_at
+    ) {
+      const endsAt = new Date(profile.shift_ends_at);
+      if (endsAt > now) {
+        shiftSecondsLeft = Math.floor(
+          (endsAt.getTime() - now.getTime()) / 1000,
+        );
+        isOnDuty = true;
+      } else {
+        // Shift expired but not yet swept
+        isOnDuty = false;
+        shiftSecondsLeft = 0;
+      }
+    }
+
+    return {
+      availability: profile.availability,
+      isOnDuty,
+      shiftEndsAt: profile.shift_ends_at?.toISOString() ?? null,
+      shiftSecondsLeft,
+      dutyStatus: profile.duty_status,
+    };
+  }
+
+  /**
    * Updates the responder profile. Only m_number is editable for data integrity.
    * Requires phone_verified_at when changing m_number to ensure OTP verification.
    */
