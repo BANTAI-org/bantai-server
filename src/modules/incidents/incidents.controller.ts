@@ -146,6 +146,20 @@ export class IncidentController {
     return assignment;
   }
 
+  @Get('assignment/offers')
+  @ApiOperation({
+    summary: 'Get pending wave offers for the authenticated responder',
+  })
+  @ApiResponse({ status: 200, description: 'Pending offers returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
+  async getPendingOffers(
+    @CurrentUser('sub') responderId: string,
+  ): Promise<IncidentEntity[]> {
+    return this.incidentService.getPendingOffers(responderId);
+  }
+
   @Get('assignment/history')
   @ApiOperation({
     summary: 'Get assignment history for the authenticated responder',

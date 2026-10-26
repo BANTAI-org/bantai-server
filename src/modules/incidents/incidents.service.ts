@@ -205,6 +205,10 @@ export class IncidentService {
     return this.incidentRepository.findCurrentAssignment(responderId);
   }
 
+  async getPendingOffers(responderId: string): Promise<IncidentEntity[]> {
+    return this.incidentRepository.findPendingOffers(responderId);
+  }
+
   async getAssignmentHistory(
     responderId: string,
     limit: number,

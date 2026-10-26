@@ -566,6 +566,21 @@ export class IncidentRepository {
     return row ? toIncident(row) : null;
   }
 
+  async findPendingOffers(responderId: string): Promise<IncidentEntity[]> {
+    const rows = await queryRows<IncidentRow>(
+      this.db,
+      `SELECT DISTINCT ${INCIDENT_COLUMNS}
+       FROM incident i
+       JOIN incident_responder_assignment a ON a.incident_id = i.id
+      WHERE a.responder_id = $1::uuid
+        AND a.status = 'OFFERED'
+        AND i.status IN ('DISPATCHING', 'CLAIMED')
+      ORDER BY a.created_at DESC`,
+      [responderId],
+    );
+    return rows.map(toIncident);
+  }
+
   async findAssignmentHistory(
     responderId: string,
     limit: number,
