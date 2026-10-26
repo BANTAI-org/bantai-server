@@ -8,6 +8,7 @@ import {
   HttpStatus,
   NotFoundException,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   Query,
@@ -172,8 +173,8 @@ export class IncidentController {
   @ApiRoles(Role.RESPONDER)
   async getAssignmentHistory(
     @CurrentUser('sub') responderId: string,
-    @Query('limit') limit?: number,
-    @Query('offset') offset?: number,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+    @Query('offset', new ParseIntPipe({ optional: true })) offset?: number,
   ): Promise<IncidentEntity[]> {
     return this.incidentService.getAssignmentHistory(
       responderId,

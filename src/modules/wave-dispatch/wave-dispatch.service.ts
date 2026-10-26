@@ -8,7 +8,6 @@ import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { IncidentRepository } from '../incidents/incidents.repository';
 import { RedisService } from '../redis/redis.service';
 import { IncidentEvents } from '../incidents/events/incident-events';
-import { NotificationsService } from '../notifications/notifications.service';
 import type { IncidentCreatedEvent } from '../incidents/events/incident-events';
 import type { IncidentEntity } from '../incidents/interfaces/incident-entity.interface';
 
@@ -22,7 +21,6 @@ export class WaveDispatchService implements OnModuleInit, OnModuleDestroy {
     private readonly incidentRepository: IncidentRepository,
     private readonly redisService: RedisService,
     private readonly events: EventEmitter2,
-    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -290,7 +288,7 @@ export class WaveDispatchService implements OnModuleInit, OnModuleDestroy {
           userId: responder.user_id,
           title: 'New Emergency Assignment',
           body: `Incident ${Math.round(responder.distance_meters)}m away — Wave #${waveNumber}`,
-          type: 'assignment',
+          type: 'dispatch_assigned',
           relatedEntityId: event.incidentId,
         });
       }
