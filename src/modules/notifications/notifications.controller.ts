@@ -9,6 +9,7 @@ import {
   Query,
   UseGuards,
   ParseUUIDPipe,
+  ParseIntPipe,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -48,12 +49,9 @@ export class NotificationsController {
   @ApiResponse({ status: 200, description: 'Notifications returned' })
   async getMyNotifications(
     @CurrentUser('sub') userId: string,
-    @Query('limit') limit?: string,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
   ) {
-    return this.service.getMyNotifications(
-      userId,
-      limit ? parseInt(limit, 10) : 50,
-    );
+    return this.service.getMyNotifications(userId, limit ?? 50);
   }
 
   @Patch(':id/read')

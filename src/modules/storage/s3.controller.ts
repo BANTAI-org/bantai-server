@@ -31,6 +31,17 @@ import {
   CompleteMultipartDto,
 } from './dto/multipart-evidence.dto';
 
+// Allowlist of safe extensions for profile images and evidence
+const ALLOWED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp'];
+const ALLOWED_EVIDENCE_EXTENSIONS = [
+  'mp4',
+  'mov',
+  'webm',
+  'jpg',
+  'jpeg',
+  'png',
+];
+
 @ApiTags('Storage')
 @ApiBearerAuth()
 @Controller('storage')
@@ -56,11 +67,21 @@ export class StorageController {
     @Body() dto: RequestUploadUrlDto,
     @CurrentUser('sub') userId: string,
   ): Promise<{ uploadUrl: string; objectKey: string }> {
-    const extension = dto.contentType.split('/')[1];
+    // Extract and validate extension safely
+    const rawExtension = dto.contentType.split('/')[1]?.toLowerCase() || '';
+    const extension = rawExtension.split('+')[0]; // handle image/svg+xml
+
+    if (!ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
+      throw new BadRequestException(
+        `Invalid image type. Allowed: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}`,
+      );
+    }
+
     const key = `users/${userId}/avatar.${extension}`;
     const bucket = this.configService.getOrThrow<string>(
       'R2_BUCKET_PROFILE_IMAGES',
     );
+
     const url = await this.s3Service.generatePresignedUploadUrl(
       bucket,
       key,
@@ -93,11 +114,18 @@ export class StorageController {
     @CurrentUser('sub') userId: string,
     @Query('incidentId') incidentId?: string,
   ): Promise<{ uploadId: string; objectKey: string }> {
-    // ... implementation stays the same
-    const extension = dto.fileName.split('.').pop() || 'mp4';
+    // Extract and validate extension safely
+    const extension = dto.fileName.split('.').pop()?.toLowerCase() || 'mp4';
+    if (!ALLOWED_EVIDENCE_EXTENSIONS.includes(extension)) {
+      throw new BadRequestException(
+        `Invalid evidence file type. Allowed: ${ALLOWED_EVIDENCE_EXTENSIONS.join(', ')}`,
+      );
+    }
+
     const key = incidentId
       ? `incidents/${incidentId}/evidence_${userId}_${Date.now()}.${extension}`
       : `unlinked/${userId}/evidence_${userId}_${Date.now()}.${extension}`;
+
     const bucket = this.configService.getOrThrow<string>('R2_BUCKET_EVIDENCES');
     const uploadId = await this.s3Service.createMultipartUpload(
       bucket,
@@ -168,6 +196,11 @@ export class StorageController {
     @Query('key') key: string,
     @Query('bucket') bucketType: 'profile' | 'evidence',
   ): Promise<{ downloadUrl: string }> {
+    // Basic validation to prevent path traversal
+    if (key.includes('..')) {
+      throw new BadRequestException('Invalid object key');
+    }
+
     let bucketName: string;
     if (bucketType === 'evidence') {
       bucketName = this.configService.getOrThrow<string>('R2_BUCKET_EVIDENCES');
@@ -180,6 +213,11 @@ export class StorageController {
         'Invalid bucket specified. Use "profile" or "evidence".',
       );
     }
+
+    // TODO: In V2, verify that the caller is actually authorized to view
+    // the incident referenced in the key (e.g. `incidents/<id>/...`).
+    // For now, users must be authenticated to get the presigned URL.
+
     const url = await this.s3Service.generatePresignedDownloadUrl(
       bucketName,
       key,

@@ -9,6 +9,7 @@ export interface NotificationCreatedEvent {
   title: string;
   body: string;
   type: string;
+  tone?: string;
   relatedEntityId: string;
 }
 
@@ -45,11 +46,25 @@ export class NotificationsService {
   }
 
   /**
-   * Listens for internal domain events and triggers the actual FCM push.
-   * Emit this from anywhere in your app: this.events.emit('notification.created', payload)
+   * Listens for internal domain events, writes to the durable inbox,
+   * and triggers the actual FCM push.
    */
   @OnEvent('notification.created')
   async handleNotificationCreated(event: NotificationCreatedEvent) {
+    const tone = event.tone ?? 'info';
+
+    // 1. Write to Postgres inbox FIRST so it's never lost
+    await this.repo.createNotification({
+      userId: event.userId,
+      type: event.type,
+      tone: tone,
+      title: event.title,
+      body: event.body,
+      relatedEntity: 'incident',
+      relatedEntityId: event.relatedEntityId,
+    });
+
+    // 2. Send FCM push
     await this.fcm.sendPushToUser(event.userId, event.title, event.body, {
       type: event.type,
       entityId: event.relatedEntityId,

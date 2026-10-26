@@ -18,10 +18,6 @@ export interface NotificationRow {
 export class NotificationsRepository {
   constructor(private readonly db: DatabaseService) {}
 
-  /**
-   * Registers or updates an FCM token for a user.
-   * ON CONFLICT handles token refreshing or switching accounts on the same device.
-   */
   async registerToken(
     userId: string,
     fcmToken: string,
@@ -39,8 +35,32 @@ export class NotificationsRepository {
   }
 
   /**
-   * Fetches a user's notification history (newest first).
+   * Persists a notification to the user's durable inbox.
    */
+  async createNotification(data: {
+    userId: string;
+    type: string;
+    tone: string;
+    title: string;
+    body: string;
+    relatedEntity?: string | null;
+    relatedEntityId?: string | null;
+  }): Promise<void> {
+    await this.db.query(
+      `INSERT INTO notification (user_id, type, tone, title, body, related_entity, related_entity_id)
+       VALUES ($1::uuid, $2::notification_type_enum, $3::notification_tone_enum, $4, $5, $6, $7::uuid)`,
+      [
+        data.userId,
+        data.type,
+        data.tone,
+        data.title,
+        data.body,
+        data.relatedEntity ?? 'incident',
+        data.relatedEntityId ?? null,
+      ],
+    );
+  }
+
   async getNotifications(
     userId: string,
     limit = 50,
@@ -64,9 +84,6 @@ export class NotificationsRepository {
     return queryRows<NotificationRow>(this.db, query, params);
   }
 
-  /**
-   * Marks a specific notification as read.
-   */
   async markAsRead(notificationId: string, userId: string): Promise<boolean> {
     const result = await this.db.query(
       `UPDATE notification SET read_at = now()
@@ -76,9 +93,6 @@ export class NotificationsRepository {
     return (result.rowCount ?? 0) > 0;
   }
 
-  /**
-   * Deletes a notification permanently.
-   */
   async deleteNotification(
     notificationId: string,
     userId: string,
@@ -90,9 +104,6 @@ export class NotificationsRepository {
     return (result.rowCount ?? 0) > 0;
   }
 
-  /**
-   * Fetches all active FCM tokens for a user.
-   */
   async getUserTokens(userId: string): Promise<string[]> {
     const rows = await queryRows<{ fcm_token: string }>(
       this.db,
@@ -102,9 +113,6 @@ export class NotificationsRepository {
     return rows.map((r) => r.fcm_token);
   }
 
-  /**
-   * Cleans up dead tokens (called when FCM says the token is unregistered).
-   */
   async removeTokens(tokens: string[]): Promise<void> {
     if (tokens.length === 0) return;
     await this.db.query(
