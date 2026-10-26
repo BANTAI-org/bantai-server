@@ -19,7 +19,7 @@ export function toIncidentEvidenceItem(
     key,
     // view and type passed through; all other metadata will be server-enriched
     ...rest,
-  } as IncidentEvidenceItem;
+  };
 }
 
 /** Maps CreateIncidentDto.evidence for CreateIncidentData; undefined stays undefined. */

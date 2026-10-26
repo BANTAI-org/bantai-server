@@ -281,7 +281,6 @@ export class RespondersController {
     shiftSecondsLeft: number | null;
     dutyStatus: string | null;
   }> {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
     return await this.responderService.getCurrentAvailability(userId);
   }
 }

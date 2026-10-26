@@ -32,7 +32,6 @@ export interface ResponderProfileRow {
   rank: PoliceRank | null;
   availability: AvailabilityStatusEnum;
   shift_ends_at: Date | null;
-  duty_status: string | null;
 }
 
 /** A responder may only go on/off duty within this distance of their command center. */
@@ -277,8 +276,7 @@ export class ResponderRepository {
       p.call_sign,
       p.rank,
       p.availability,
-      p.shift_ends_at,
-      p.duty_status
+      p.shift_ends_at
     FROM user_account u
     LEFT JOIN command_center cc ON cc.id = u.command_center_id
     LEFT JOIN r_profile p ON p.user_id = u.id

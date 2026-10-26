@@ -506,7 +506,7 @@ export class ResponderService {
       isOnDuty,
       shiftEndsAt: profile.shift_ends_at?.toISOString() ?? null,
       shiftSecondsLeft,
-      dutyStatus: profile.duty_status,
+      dutyStatus: profile.availability,
     };
   }
 
