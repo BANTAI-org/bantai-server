@@ -19,11 +19,6 @@ export class SlaSweeperService {
     await this.sweepStalledClaims();
   }
 
-  /**
-   * Incidents stuck in DISPATCHING for > 90s. Catches restart losses
-   * the wave engine's bootstrap missed, and cases where no responders
-   * were ever found.
-   */
   private async sweepDispatching(): Promise<void> {
     try {
       const orphanedIds =
@@ -58,14 +53,10 @@ export class SlaSweeperService {
     }
   }
 
-  /**
-   * Incidents claimed for > 2 minutes without reaching ON_SCENE.
-   * Catches responders whose phone died, who drove the wrong way, or
-   * who forgot to tap "en route".
-   */
   private async sweepStalledClaims(): Promise<void> {
     try {
-      const stalledIds = await this.incidentRepository.findStalledClaims(120);
+      // 600 seconds = 10 minutes. Was 120.
+      const stalledIds = await this.incidentRepository.findStalledClaims(600);
       if (stalledIds.length === 0) return;
 
       this.logger.warn(

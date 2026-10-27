@@ -180,10 +180,7 @@ export class IncidentService {
       throw new BadRequestException('Device is not paired with a driver');
     }
 
-    // Force the resolved UUID so the downstream INSERT works
     dto.device_id = deviceData.deviceId;
-
-    // Delegate to the standard createIncident with the resolved driver
     return this.createIncident(dto, deviceData.driverId);
   }
 
@@ -219,6 +216,13 @@ export class IncidentService {
       responderId,
     );
     if (!ok) {
+      // Diagnose why the update failed
+      const incident = await this.incidentRepository.findIncidentById(incidentId);
+      this.logger.warn(
+        `markEnRoute failed: incidentId=${incidentId}, responderId=${responderId}, ` +
+        `incident.status=${incident?.status ?? 'NOT_FOUND'}, ` +
+        `claimed_by_id=${incident?.claimed_by_id ?? 'NULL'}`,
+      );
       throw new ConflictException(
         'You can only head to the scene after claiming this incident',
       );
@@ -258,13 +262,11 @@ export class IncidentService {
     method: ArrivalConfirmationMethod,
     confirmedById: string | null,
   ): Promise<void> {
-    // 1. Fetch live tracking data to verify location
     const tracking = await this.trackingService.computeTracking(incidentId);
     if (!tracking) {
       throw new NotFoundException('Incident not found');
     }
 
-    // 2. Geofence check: must be within 30 meters
     if (tracking.distance_meters !== null && tracking.distance_meters > 30) {
       throw new BadRequestException(
         `You are ${tracking.distance_meters}m away from the incident. ` +
@@ -272,7 +274,6 @@ export class IncidentService {
       );
     }
 
-    // 3. GPS method requires a fresh fix
     if (
       method === ArrivalConfirmationMethod.GPS &&
       tracking.distance_meters === null
@@ -282,7 +283,6 @@ export class IncidentService {
       );
     }
 
-    // 4. Proceed with the update
     const ok = await this.incidentRepository.markArrived(
       incidentId,
       responderId,
@@ -555,15 +555,9 @@ export class IncidentService {
       };
       this.events.emit(IncidentEvents.ESCALATED, escalated);
 
-      if (incident.claimed_by_id) {
-        this.events.emit('notification.created', {
-          userId: incident.claimed_by_id,
-          title: 'Dispatch update',
-          body: 'The incident you are handling has been escalated to a command center.',
-          type: 'incident_escalated',
-          relatedEntityId: incidentId,
-        });
-      }
+      // NOTE: The DB trigger `incident_after_change` already inserts a
+      // notification row for `incident_escalated`. Do NOT emit
+      // `notification.created` here — it would create a duplicate.
     });
     return id;
   }
@@ -843,6 +837,17 @@ export class IncidentService {
   @OnEvent('incident.sla_timeout')
   async handleSlaTimeout(event: { incidentId: string }): Promise<void> {
     try {
+      const stillUnclaimed = await this.incidentRepository.isIncidentUnclaimed(
+        event.incidentId,
+      );
+      if (!stillUnclaimed) {
+        this.logger.log(
+          `Skipping SLA escalation for incident ${event.incidentId}: ` +
+          `it was claimed before escalation could execute.`,
+        );
+        return;
+      }
+
       const ccId = await this.incidentRepository.findFirstCommandCenterId();
       if (!ccId) {
         this.logger.error('No command center exists to escalate to.');

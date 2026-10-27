@@ -439,6 +439,10 @@ export class IncidentRepository {
             SET status = 'ESCALATED'
           WHERE id = $1::uuid
             AND status NOT IN ('ESCALATED', 'RESOLVED', 'CANCELLED')
+            AND (
+              $3::escalation_reason_enum = 'MANUAL_INTERVENTION'
+              OR claimed_by_id IS NULL
+            )
           RETURNING id
        )
        INSERT INTO incident_escalation
@@ -713,12 +717,6 @@ export class IncidentRepository {
     return existing.id;
   }
 
-  /**
-   * Inserts assignment records for a wave.
-   * Returns ONLY the responder IDs that were actually inserted (new to this
-   * incident). If a responder was already offered in a prior wave, the
-   * ON CONFLICT DO NOTHING ignores them and they are NOT in the returned array.
-   */
   async createWaveAssignments(
     incidentId: string,
     waveId: string,
@@ -768,7 +766,7 @@ export class IncidentRepository {
       this.db,
       `SELECT id FROM incident
         WHERE status IN ('CLAIMED', 'EN_ROUTE')
-          AND claimed_at < NOW() - INTERVAL '1 second' * $1
+          AND updated_at < NOW() - INTERVAL '1 second' * $1
         LIMIT 10`,
       [thresholdSeconds],
     );
