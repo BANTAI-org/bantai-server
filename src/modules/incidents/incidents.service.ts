@@ -217,11 +217,12 @@ export class IncidentService {
     );
     if (!ok) {
       // Diagnose why the update failed
-      const incident = await this.incidentRepository.findIncidentById(incidentId);
+      const incident =
+        await this.incidentRepository.findIncidentById(incidentId);
       this.logger.warn(
         `markEnRoute failed: incidentId=${incidentId}, responderId=${responderId}, ` +
-        `incident.status=${incident?.status ?? 'NOT_FOUND'}, ` +
-        `claimed_by_id=${incident?.claimed_by_id ?? 'NULL'}`,
+          `incident.status=${incident?.status ?? 'NOT_FOUND'}, ` +
+          `claimed_by_id=${incident?.claimed_by_id ?? 'NULL'}`,
       );
       throw new ConflictException(
         'You can only head to the scene after claiming this incident',
@@ -843,7 +844,7 @@ export class IncidentService {
       if (!stillUnclaimed) {
         this.logger.log(
           `Skipping SLA escalation for incident ${event.incidentId}: ` +
-          `it was claimed before escalation could execute.`,
+            `it was claimed before escalation could execute.`,
         );
         return;
       }
