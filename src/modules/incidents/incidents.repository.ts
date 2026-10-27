@@ -502,10 +502,6 @@ export class IncidentRepository {
     };
   }
 
-  /**
-   * Looks up a paired device by either its UUID or its hardware serial.
-   * Returns the resolved UUID and the paired driver.
-   */
   async getDeviceAndDriver(
     identifier: string,
   ): Promise<{ deviceId: string; driverId: string | null } | null> {
@@ -717,23 +713,33 @@ export class IncidentRepository {
     return existing.id;
   }
 
+  /**
+   * Inserts assignment records for a wave.
+   * Returns ONLY the responder IDs that were actually inserted (new to this
+   * incident). If a responder was already offered in a prior wave, the
+   * ON CONFLICT DO NOTHING ignores them and they are NOT in the returned array.
+   */
   async createWaveAssignments(
     incidentId: string,
     waveId: string,
     responders: { user_id: string; distance_meters: number }[],
-  ): Promise<void> {
-    if (responders.length === 0) return;
+  ): Promise<string[]> {
+    if (responders.length === 0) return [];
     const userIds = responders.map((r) => r.user_id);
     const distances = responders.map((r) => r.distance_meters);
 
-    await this.db.query(
+    const rows = await queryRows<{ responder_id: string }>(
+      this.db,
       `INSERT INTO incident_responder_assignment (
          incident_id, wave_id, responder_id, origin, distance_meters, status
        )
        SELECT $1::uuid, $2::uuid, unnest($3::uuid[]), 'WAVE_OFFER'::assignment_origin_enum, unnest($4::numeric[]), 'OFFERED'::assignment_status_enum
-       ON CONFLICT (incident_id, responder_id) DO NOTHING`,
+       ON CONFLICT (incident_id, responder_id) DO NOTHING
+       RETURNING responder_id`,
       [incidentId, waveId, userIds, distances],
     );
+
+    return rows.map((r) => r.responder_id);
   }
 
   async findFirstCommandCenterId(): Promise<string | null> {

@@ -23,11 +23,6 @@ export class WaveDispatchService implements OnModuleInit, OnModuleDestroy {
     private readonly events: EventEmitter2,
   ) {}
 
-  /**
-   * On startup, re-arm timers for any incident still in DISPATCHING.
-   * Railway redeploys kill in-memory timers, which would otherwise leave
-   * incidents stuck with no further waves and no SLA escalation.
-   */
   async onModuleInit(): Promise<void> {
     try {
       const orphans = await this.incidentRepository.findDispatchingIncidents();
@@ -49,11 +44,6 @@ export class WaveDispatchService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /**
-   * Re-arms the timers for an incident found on startup. Uses the incident's
-   * created_at to compute the remaining delay, so recovery does not restart
-   * the wave clock from zero.
-   */
   private recoverIncident(incident: IncidentEntity): void {
     const ageMs = Date.now() - new Date(incident.created_at).getTime();
     const event = this.toCreatedEvent(incident);
@@ -63,7 +53,6 @@ export class WaveDispatchService implements OnModuleInit, OnModuleDestroy {
 
     const timers: NodeJS.Timeout[] = [];
 
-    // Wave 2 at 20s, or immediate if we're already past that.
     timers.push(
       setTimeout(
         () => void this.checkAndFireNextWave(event, 2, 2000),
@@ -71,7 +60,6 @@ export class WaveDispatchService implements OnModuleInit, OnModuleDestroy {
       ),
     );
 
-    // Wave 3 at 40s, or immediate if we're already past that.
     timers.push(
       setTimeout(
         () => void this.checkAndFireNextWave(event, 3, 3000),
@@ -79,7 +67,6 @@ export class WaveDispatchService implements OnModuleInit, OnModuleDestroy {
       ),
     );
 
-    // SLA at 60s, or immediate if we're already past that.
     timers.push(
       setTimeout(
         () => void this.triggerSlaEscalation(event),
@@ -112,12 +99,6 @@ export class WaveDispatchService implements OnModuleInit, OnModuleDestroy {
     this.armTimers(event);
   }
 
-  /**
-   * Re-arms the sequence when an incident returns to DISPATCHING after a
-   * responder stands down. Without this, the timers were already cleared
-   * at CLAIMED and the incident would sit in DISPATCHING until the
-   * 90-second SLA sweeper escalates it — never getting waves 2 or 3.
-   */
   @OnEvent(IncidentEvents.STATUS_CHANGED)
   async handleStatusChanged(event: {
     incidentId: string;
@@ -266,24 +247,37 @@ export class WaveDispatchService implements OnModuleInit, OnModuleDestroy {
         radiusMeters,
       );
 
-      await this.incidentRepository.createWaveAssignments(
-        event.incidentId,
-        waveId,
-        verifiedResponders.map((r) => ({
-          user_id: r.user_id,
-          distance_meters: r.distance_meters,
-        })),
+      // Insert assignments. The repo returns ONLY the newly inserted IDs.
+      const insertedResponderIds =
+        await this.incidentRepository.createWaveAssignments(
+          event.incidentId,
+          waveId,
+          verifiedResponders.map((r) => ({
+            user_id: r.user_id,
+            distance_meters: r.distance_meters,
+          })),
+        );
+
+      // Filter to only the NEW ones — skip anyone already offered in a prior wave.
+      const newlyOfferedResponders = verifiedResponders.filter((r) =>
+        insertedResponderIds.includes(r.user_id),
       );
+
+      if (newlyOfferedResponders.length === 0) {
+        this.logger.log(
+          `Wave #${waveNumber} had 0 new responders (all already offered in a prior wave). Skipping emit.`,
+        );
+        return;
+      }
 
       this.events.emit('wave.issued', {
         incidentId: event.incidentId,
         waveId,
         waveNumber,
-        responders: verifiedResponders,
+        responders: newlyOfferedResponders,
       });
 
-      // Emit notification.created for each responder to trigger FCM push
-      for (const responder of verifiedResponders) {
+      for (const responder of newlyOfferedResponders) {
         this.events.emit('notification.created', {
           userId: responder.user_id,
           title: 'New Emergency Assignment',
@@ -294,7 +288,7 @@ export class WaveDispatchService implements OnModuleInit, OnModuleDestroy {
       }
 
       this.logger.log(
-        `Wave #${waveNumber} issued to ${verifiedResponders.length} verified responders`,
+        `Wave #${waveNumber} issued to ${newlyOfferedResponders.length} new responders (skipped ${verifiedResponders.length - newlyOfferedResponders.length} already offered)`,
       );
     } catch (error) {
       this.logger.error(
