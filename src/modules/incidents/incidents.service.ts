@@ -48,6 +48,7 @@ import {
 } from './utils/peer-help-policy.util';
 import { IncidentRepository } from './incidents.repository';
 import { IncidentReportRepository } from './incidents-report.repository';
+import { TrackingService } from './incident-tracking.service';
 import { ReviewResult } from './types/datas/incident-report-datas/create-report-data.types';
 import {
   CursorPage,
@@ -69,6 +70,7 @@ export class IncidentService {
   constructor(
     private readonly incidentRepository: IncidentRepository,
     private readonly incidentReportRepository: IncidentReportRepository,
+    private readonly trackingService: TrackingService,
     private readonly events: EventEmitter2,
   ) {}
 
@@ -156,11 +158,6 @@ export class IncidentService {
     return incidentId;
   }
 
-  /**
-   * Creates an incident from an Edge AI / KVM webhook.
-   * Resolves the paired driver from either a device UUID or hardware serial,
-   * then delegates to the normal createIncident flow.
-   */
   async createEdgeIncident(dto: CreateIncidentDto): Promise<string> {
     const identifier = dto.device_id || dto.hardware_serial;
 
@@ -261,6 +258,31 @@ export class IncidentService {
     method: ArrivalConfirmationMethod,
     confirmedById: string | null,
   ): Promise<void> {
+    // 1. Fetch live tracking data to verify location
+    const tracking = await this.trackingService.computeTracking(incidentId);
+    if (!tracking) {
+      throw new NotFoundException('Incident not found');
+    }
+
+    // 2. Geofence check: must be within 30 meters
+    if (tracking.distance_meters !== null && tracking.distance_meters > 30) {
+      throw new BadRequestException(
+        `You are ${tracking.distance_meters}m away from the incident. ` +
+          `You must be within 30m to mark yourself on scene.`,
+      );
+    }
+
+    // 3. GPS method requires a fresh fix
+    if (
+      method === ArrivalConfirmationMethod.GPS &&
+      tracking.distance_meters === null
+    ) {
+      throw new BadRequestException(
+        'No fresh GPS fix available. Please update your location and try again.',
+      );
+    }
+
+    // 4. Proceed with the update
     const ok = await this.incidentRepository.markArrived(
       incidentId,
       responderId,
