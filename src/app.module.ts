@@ -21,6 +21,7 @@ import { StorageModule } from './modules/storage/s3.module';
 import { CommunicationsModule } from './modules/communications/comms.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ShiftModule } from './modules/shift/shift.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { ScheduleModule } from '@nestjs/schedule';
     CommunicationsModule,
     NotificationsModule,
     ScheduleModule.forRoot(),
+    ShiftModule,
   ],
   controllers: [AppController],
   providers: [AppService],

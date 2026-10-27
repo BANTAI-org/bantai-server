@@ -2,6 +2,10 @@ import { DatabaseService } from '../../database/database.service';
 import { CreateIncidentData } from './types/datas/incident-datas/create-incident-data.types';
 import { IncidentLogEntity } from './interfaces/incident-log-entity.interface';
 import { IncidentEntity } from './interfaces/incident-entity.interface';
+import {
+  DriverBrief,
+  DriverBriefVisibility,
+} from './interfaces/driver-brief.interface';
 import { PeerResponseStatus } from './enums/peer-response-status.enum';
 import { ArrivalConfirmationMethod } from './enums/arrival-confirmation-method.enum';
 import { IncidentStatus } from './enums/incident-status.enum';
@@ -60,7 +64,28 @@ const INCIDENT_COLUMNS = `
   i.verified_by_id, i.verified_at, i.verification_notes,
   i.created_at, i.updated_at`;
 
-type IncidentRow = Omit<IncidentEntity, 'location'> & {
+const DRIVER_BRIEF_SELECT = `
+  u.id                          AS user_id,
+  u.f_name                      AS f_name,
+  u.l_name                      AS l_name,
+  u.m_name                      AS m_name,
+  u.m_number                    AS m_number,
+  u.avatar_url                  AS avatar_url,
+  dp.blood_type                 AS blood_type,
+  dp.plate_number               AS plate_number,
+  dp.date_of_birth::text        AS date_of_birth,
+  dp.license_number             AS license_number,
+  dp.vehicle_model              AS vehicle_model,
+  dp.vehicle_color              AS vehicle_color,
+  dp.medical_conditions         AS medical_conditions,
+  dp.emergency_contacts         AS emergency_contacts`;
+
+const DRIVER_BRIEF_MINIMAL_SELECT = `
+  u.id                          AS user_id,
+  u.f_name                      AS f_name,
+  u.l_name                      AS l_name`;
+
+type IncidentRow = Omit<IncidentEntity, 'location' | 'driver'> & {
   lng: number;
   lat: number;
 };
@@ -72,6 +97,14 @@ interface IncidentRowWithCursor extends IncidentRow {
 interface IncidentLogRow extends Record<string, unknown> {
   incident_id: string;
   cursor_t: string;
+}
+
+type DriverBriefFullRow = Omit<DriverBrief, 'visibility'>;
+
+interface DriverBriefMinimalRow {
+  user_id: string;
+  f_name: string;
+  l_name: string;
 }
 
 function toIncident(row: IncidentRow): IncidentEntity {
@@ -531,6 +564,47 @@ export class IncidentRepository {
     return row ? toIncident(row) : null;
   }
 
+  async findIncidentByIdForActor(
+    incidentId: string,
+    actorId: string,
+  ): Promise<IncidentEntity | null> {
+    const [row] = await queryRows<
+      IncidentRow & { visibility: DriverBriefVisibility }
+    >(
+      this.db,
+      `SELECT ${INCIDENT_COLUMNS},
+              CASE
+                WHEN i.claimed_by_id = $2::uuid THEN 'full'::text
+                WHEN EXISTS (
+                  SELECT 1 FROM incident_peer_response p
+                   WHERE p.incident_id = i.id
+                     AND p.peer_driver_id = $2::uuid
+                     AND p.status IN ('en_route', 'on_scene')
+                ) THEN 'full'::text
+                ELSE 'minimal'::text
+              END AS visibility
+         FROM incident i
+        WHERE i.id = $1::uuid`,
+      [incidentId, actorId],
+    );
+    if (!row) return null;
+
+    const { visibility, ...incidentRow } = row;
+    const incident = toIncident(incidentRow);
+
+    if (!incident.driver_id) return { ...incident, driver: null };
+    if (incident.driver_id === actorId) return { ...incident, driver: null };
+
+    const briefs = await this.findDriverBriefs(
+      [incident.driver_id],
+      visibility,
+    );
+    return {
+      ...incident,
+      driver: briefs.get(incident.driver_id) ?? null,
+    };
+  }
+
   async canUserViewIncident(
     incidentId: string,
     userId: string,
@@ -542,6 +616,7 @@ export class IncidentRepository {
       `SELECT (
          EXISTS (SELECT 1 FROM incident i WHERE i.id = $1::uuid AND (i.driver_id = $2::uuid OR i.claimed_by_id = $2::uuid))
          OR EXISTS (SELECT 1 FROM incident_responder_assignment a WHERE a.incident_id = $1::uuid AND a.responder_id = $2::uuid AND a.status IN ('OFFERED','CLAIMED','EN_ROUTE','ARRIVED'))
+         OR EXISTS (SELECT 1 FROM incident_peer_response p WHERE p.incident_id = $1::uuid AND p.peer_driver_id = $2::uuid AND p.status IN ('notified','acknowledged','en_route','on_scene'))
          OR EXISTS (SELECT 1 FROM incident_escalation e JOIN user_account u ON u.id = $2::uuid WHERE e.incident_id = $1::uuid AND e.closed_at IS NULL AND u.role = 'admin' AND u.command_center_id = e.command_center_id)
        ) AS allowed`,
       [incidentId, userId],
@@ -575,7 +650,9 @@ export class IncidentRepository {
       LIMIT 1`,
       [responderId],
     );
-    return row ? toIncident(row) : null;
+    if (!row) return null;
+    const [enriched] = await this.attachDriverBriefs([toIncident(row)], 'full');
+    return enriched;
   }
 
   async findPendingOffers(responderId: string): Promise<IncidentEntity[]> {
@@ -590,7 +667,7 @@ export class IncidentRepository {
       ORDER BY a.offered_at DESC`,
       [responderId],
     );
-    return rows.map(toIncident);
+    return this.attachDriverBriefs(rows.map(toIncident), 'minimal');
   }
 
   async findAssignmentHistory(
@@ -608,7 +685,7 @@ export class IncidentRepository {
       LIMIT $2 OFFSET $3`,
       [responderId, limit, offset],
     );
-    return rows.map(toIncident);
+    return this.attachDriverBriefs(rows.map(toIncident), 'full');
   }
 
   async findIncidentsByStatus(
@@ -814,5 +891,149 @@ export class IncidentRepository {
       [userIds],
     );
     return rows.map((r) => r.user_id);
+  }
+
+  // ==================================================================
+  // NEW: FCM recipient lists + center-assigned dispatch
+  // ==================================================================
+
+  /**
+   * Responders who currently hold an active claim on this incident.
+   *
+   * The RESOLVED branch of the incident_after_change trigger inserts a
+   * notification row for exactly this set:
+   *   WHERE status IN ('CLAIMED','EN_ROUTE','ARRIVED')
+   * IncidentService.resolveIncident uses this query to derive the FCM
+   * recipient list, so the push reaches the same responders who got the
+   * inbox row. Keep the status list in lockstep with the trigger.
+   */
+  async getActiveResponderIdsOnIncident(incidentId: string): Promise<string[]> {
+    const rows = await queryRows<{ responder_id: string }>(
+      this.db,
+      `SELECT responder_id
+         FROM incident_responder_assignment
+        WHERE incident_id = $1::uuid
+          AND status IN ('CLAIMED', 'EN_ROUTE', 'ARRIVED')`,
+      [incidentId],
+    );
+    return rows.map((r) => r.responder_id);
+  }
+
+  /**
+   * Direct dispatch from a command center, bypassing the wave engine.
+   *
+   * The DB trigger handle_center_assignment fires on this INSERT and:
+   *   * writes a system_audit_log row (action = ASSIGN_RESPONDER)
+   *   * inserts the inbox notification for the responder
+   *     (type = dispatch_assigned)
+   * So the inbox half is already handled — the service only has to
+   * emit the FCM push (with skipInbox: true) after this returns.
+   *
+   * Inserted with status = OFFERED, so the responder claims via the
+   * existing POST /incidents/:id/claim path and the state machine takes
+   * over from there. Throws 23505 (uq_assignment_per_responder) if the
+   * responder already has any assignment row on this incident, and 23503
+   * if the responder_id doesn't exist.
+   */
+  async createCenterAssignment(
+    incidentId: string,
+    responderId: string,
+    assignedById: string,
+  ): Promise<string> {
+    const rows = await queryRows<{ id: string }>(
+      this.db,
+      `INSERT INTO incident_responder_assignment (
+         incident_id, responder_id, origin, assigned_by_id, status
+       )
+       VALUES (
+         $1::uuid, $2::uuid,
+         'CENTER_ASSIGNED'::assignment_origin_enum,
+         $3::uuid,
+         'OFFERED'::assignment_status_enum
+       )
+       RETURNING id`,
+      [incidentId, responderId, assignedById],
+    );
+    return rows[0].id;
+  }
+
+  // ==================================================================
+  // Driver brief (responder-facing enrichment)
+  // ==================================================================
+
+  private async findDriverBriefs(
+    driverIds: string[],
+    visibility: DriverBriefVisibility,
+  ): Promise<Map<string, DriverBrief>> {
+    if (driverIds.length === 0) return new Map();
+
+    if (visibility === 'minimal') {
+      const rows = await queryRows<DriverBriefMinimalRow>(
+        this.db,
+        `SELECT ${DRIVER_BRIEF_MINIMAL_SELECT}
+           FROM user_account u
+          WHERE u.id = ANY($1::uuid[])
+            AND u.deleted_at IS NULL`,
+        [driverIds],
+      );
+      const map = new Map<string, DriverBrief>();
+      for (const row of rows) {
+        map.set(row.user_id, {
+          ...row,
+          m_name: null,
+          m_number: null,
+          avatar_url: null,
+          blood_type: null,
+          plate_number: null,
+          date_of_birth: null,
+          license_number: null,
+          vehicle_model: null,
+          vehicle_color: null,
+          medical_conditions: null,
+          emergency_contacts: null,
+          visibility: 'minimal',
+        });
+      }
+      return map;
+    }
+
+    const rows = await queryRows<DriverBriefFullRow>(
+      this.db,
+      `SELECT ${DRIVER_BRIEF_SELECT}
+         FROM user_account u
+         JOIN d_profile dp ON dp.user_id = u.id
+        WHERE u.id = ANY($1::uuid[])
+          AND u.deleted_at IS NULL`,
+      [driverIds],
+    );
+    const map = new Map<string, DriverBrief>();
+    for (const row of rows) {
+      map.set(row.user_id, { ...row, visibility: 'full' });
+    }
+    return map;
+  }
+
+  private async attachDriverBriefs(
+    incidents: IncidentEntity[],
+    visibility: DriverBriefVisibility,
+  ): Promise<IncidentEntity[]> {
+    if (incidents.length === 0) return incidents;
+
+    const driverIds = [
+      ...new Set(
+        incidents
+          .map((i) => i.driver_id)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    if (driverIds.length === 0) {
+      return incidents.map((i) => ({ ...i, driver: null }));
+    }
+
+    const briefs = await this.findDriverBriefs(driverIds, visibility);
+    return incidents.map((i) => ({
+      ...i,
+      driver: i.driver_id ? (briefs.get(i.driver_id) ?? null) : null,
+    }));
   }
 }

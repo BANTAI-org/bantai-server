@@ -32,6 +32,7 @@ import { ResolveIncidentDto } from './dto/resolve-incident.dto';
 import { UpdateSeverityDto } from './dto/update-severity.dto';
 import { UpdateThreatLevelDto } from './dto/update-threat-level.dto';
 import { VerifyIncidentDto } from './dto/verify-incident.dto';
+import { AssignResponderDto } from './dto/assign-responder.dto';
 import { IncidentService } from './incidents.service';
 import { IncidentEntity } from './interfaces/incident-entity.interface';
 import { IncidentLogEntity } from './interfaces/incident-log-entity.interface';
@@ -497,6 +498,44 @@ export class IncidentController {
       dto.reason,
       userId,
       dto.notes,
+    );
+    return { id };
+  }
+
+  /**
+   * Center-assigned dispatch on an already ESCALATED incident.
+   * Bypasses the wave engine; the responder receives a normal inbox row
+   * and FCM push, then claims via POST /incidents/:incidentId/claim.
+   *
+   * Admin / super only, since assigning an individual responder is a
+   * command-center decision that a claimant shouldn't be able to make
+   * on their own behalf.
+   */
+  @Post(':incidentId/assign')
+  @ApiOperation({
+    summary: 'Assign a specific responder to an escalated incident',
+  })
+  @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
+  @ApiBody({ type: AssignResponderDto })
+  @ApiResponse({ status: 201, description: 'Responder assigned' })
+  @ApiResponse({ status: 400, description: 'Invalid assignment data' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Incident or responder not found' })
+  @ApiResponse({
+    status: 409,
+    description: 'Incident is not escalated, or responder is already assigned',
+  })
+  @Roles(Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.ADMIN, Role.SUPER)
+  async assign(
+    @Param() params: IncidentIdParamDto,
+    @Body() dto: AssignResponderDto,
+    @CurrentUser('sub') userId: string,
+  ): Promise<{ id: string }> {
+    const id = await this.incidentService.assignResponderByCenter(
+      params.incidentId,
+      dto.responder_id,
+      userId,
     );
     return { id };
   }

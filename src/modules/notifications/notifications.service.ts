@@ -10,7 +10,26 @@ export interface NotificationCreatedEvent {
   body: string;
   type: string;
   tone?: string;
+  /**
+   * Polymorphic target discriminator, e.g. 'incident' or 'incident_report'.
+   * Must match the value stored by the DB triggers when the same logical
+   * event is also written from SQL (see notify_and_audit_report_review).
+   */
+  relatedEntity?: string;
   relatedEntityId: string;
+  /**
+   * When true, skip the Postgres insert and only send the FCM push.
+   * Set this whenever a database trigger already wrote the notification
+   * row for the same logical event:
+   *   * report approved / needs_revision   (notify_and_audit_report_review)
+   *   * incident escalated                 (incident_after_change)
+   *   * incident resolved                  (incident_after_change)
+   *   * center-assigned responder notified (handle_center_assignment)
+   * The event's title / body / type / relatedEntityId must match the
+   * trigger's row exactly, so the push shows the same content the user
+   * sees in the inbox.
+   */
+  skipInbox?: boolean;
 }
 
 @Injectable()
@@ -48,23 +67,27 @@ export class NotificationsService {
   /**
    * Listens for internal domain events, writes to the durable inbox,
    * and triggers the actual FCM push.
+   *
+   * If `event.skipInbox` is true, the DB insert is skipped — the caller
+   * has verified that a database trigger already wrote the notification
+   * row for this same event. FCM is sent either way.
    */
   @OnEvent('notification.created')
   async handleNotificationCreated(event: NotificationCreatedEvent) {
     const tone = event.tone ?? 'info';
 
-    // 1. Write to Postgres inbox FIRST so it's never lost
-    await this.repo.createNotification({
-      userId: event.userId,
-      type: event.type,
-      tone: tone,
-      title: event.title,
-      body: event.body,
-      relatedEntity: 'incident',
-      relatedEntityId: event.relatedEntityId,
-    });
+    if (!event.skipInbox) {
+      await this.repo.createNotification({
+        userId: event.userId,
+        type: event.type,
+        tone: tone,
+        title: event.title,
+        body: event.body,
+        relatedEntity: event.relatedEntity ?? 'incident',
+        relatedEntityId: event.relatedEntityId,
+      });
+    }
 
-    // 2. Send FCM push
     await this.fcm.sendPushToUser(event.userId, event.title, event.body, {
       type: event.type,
       entityId: event.relatedEntityId,

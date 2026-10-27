@@ -25,6 +25,12 @@ import { ThreatLevel } from './enums/threat-level.enum';
 import { ThreatType } from './enums/threat-type.enum';
 import { TriggerSource } from './enums/trigger-source.enum';
 
+import type {
+  IncidentReportSummaryQueryDto,
+  IncidentReportSummaryResponseDto,
+} from './dto/incident-report-summary.dto';
+import { ListIncidentReportsQueryDto } from './dto/list-incident-report-query.dto';
+import { OffsetPageResponseDto } from '../../common/dto/offset-based-pagination.dto';
 import {
   IncidentCreatedEvent,
   IncidentEscalatedEvent,
@@ -216,7 +222,6 @@ export class IncidentService {
       responderId,
     );
     if (!ok) {
-      // Diagnose why the update failed
       const incident =
         await this.incidentRepository.findIncidentById(incidentId);
       this.logger.warn(
@@ -440,6 +445,12 @@ export class IncidentService {
       standDownPeerIds,
       'incident_closed',
     );
+
+    // The DB trigger incident_after_change already inserted the inbox rows
+    // for every responder who was CLAIMED / EN_ROUTE / ARRIVED at resolve
+    // time. Emit with skipInbox so FCM fires without duplicating the rows.
+    await this.emitIncidentResolvedNotifications(incidentId);
+
     await this.announceStatus(incidentId);
   }
 
@@ -556,11 +567,85 @@ export class IncidentService {
       };
       this.events.emit(IncidentEvents.ESCALATED, escalated);
 
-      // NOTE: The DB trigger `incident_after_change` already inserts a
-      // notification row for `incident_escalated`. Do NOT emit
-      // `notification.created` here — it would create a duplicate.
+      // The DB trigger incident_after_change already inserted the
+      // notification row for the claimant. Skip the inbox insert so we
+      // don't duplicate, but still emit so FCM fires. Title / body /
+      // type / relatedEntityId must match the trigger's row exactly.
+      if (incident.claimed_by_id) {
+        this.events.emit('notification.created', {
+          userId: incident.claimed_by_id,
+          title: 'Incident escalated',
+          body: 'The incident you are handling has been escalated to a command center.',
+          type: 'incident_escalated',
+          tone: 'attention',
+          relatedEntity: 'incident',
+          relatedEntityId: incidentId,
+          skipInbox: true,
+        });
+      }
     });
     return id;
+  }
+
+  /**
+   * Center-assigned dispatch: bypasses the wave engine on an already
+   * ESCALATED incident. The DB trigger handle_center_assignment writes
+   * the inbox notification and audit row on INSERT, so this method only
+   * emits the FCM push.
+   *
+   * The inserted assignment has status = OFFERED; the responder then
+   * claims it via POST /incidents/:id/claim, and the state machine
+   * moves the incident from ESCALATED to CLAIMED as usual.
+   */
+  async assignResponderByCenter(
+    incidentId: string,
+    responderId: string,
+    assignedById: string,
+  ): Promise<string> {
+    const incident = await this.incidentRepository.findIncidentById(incidentId);
+    if (!incident) throw new NotFoundException('Incident not found');
+
+    if (incident.status !== IncidentStatus.ESCALATED) {
+      throw new ConflictException(
+        'Only escalated incidents can be assigned by a command center',
+      );
+    }
+
+    let assignmentId: string;
+    try {
+      assignmentId = await this.incidentRepository.createCenterAssignment(
+        incidentId,
+        responderId,
+        assignedById,
+      );
+    } catch (error) {
+      if (isPgError(error, '23505')) {
+        throw new ConflictException(
+          'This responder is already assigned to this incident',
+        );
+      }
+      if (isPgError(error, '23503')) {
+        throw new NotFoundException('Responder not found');
+      }
+      throw error;
+    }
+
+    // The DB trigger handle_center_assignment already inserted the inbox
+    // row. Skip the inbox insert so we don't duplicate, but still emit so
+    // FCM fires. Title / body / type / relatedEntityId must match the
+    // trigger's row exactly.
+    this.events.emit('notification.created', {
+      userId: responderId,
+      title: 'New dispatch assignment',
+      body: 'A command center has assigned you to an incident.',
+      type: 'dispatch_assigned',
+      tone: 'attention',
+      relatedEntity: 'incident',
+      relatedEntityId: incidentId,
+      skipInbox: true,
+    });
+
+    return assignmentId;
   }
 
   async cancelIncident(
@@ -602,6 +687,25 @@ export class IncidentService {
       role,
     );
     if (!allowed) throw new ForbiddenException('You cannot view this incident');
+
+    if (role === Role.DRIVER) {
+      const enriched = await this.incidentRepository.findIncidentByIdForActor(
+        incidentId,
+        userId,
+      );
+      if (!enriched) throw new NotFoundException('Incident not found');
+      return enriched;
+    }
+
+    if (role === Role.RESPONDER) {
+      const enriched = await this.incidentRepository.findIncidentByIdForActor(
+        incidentId,
+        userId,
+      );
+      if (!enriched) throw new NotFoundException('Incident not found');
+      return enriched;
+    }
+
     return this.getIncident(incidentId);
   }
 
@@ -755,9 +859,14 @@ export class IncidentService {
       this.events.emit('notification.created', {
         userId: report.assigned_reporter_id,
         title: 'Report approved',
-        body: 'Your last incident report has been reviewed and accepted.',
+        body:
+          report.reviewer_notes ??
+          'Your incident report has been reviewed and approved.',
         type: 'report_review_result',
+        tone: 'success',
+        relatedEntity: 'incident_report',
         relatedEntityId: reportId,
+        skipInbox: true,
       });
     }
 
@@ -786,10 +895,13 @@ export class IncidentService {
     if (report && report.assigned_reporter_id) {
       this.events.emit('notification.created', {
         userId: report.assigned_reporter_id,
-        title: 'Revision requested',
-        body: 'Admin feedback added to your report. Please revise and resubmit.',
+        title: 'Report needs revision',
+        body: notes,
         type: 'report_review_result',
+        tone: 'attention',
+        relatedEntity: 'incident_report',
         relatedEntityId: reportId,
+        skipInbox: true,
       });
     }
 
@@ -833,6 +945,69 @@ export class IncidentService {
         cursor: query.cursor,
       }),
     );
+  }
+
+  async getReportSummary(
+    actor: ServiceActor,
+    query: IncidentReportSummaryQueryDto,
+  ): Promise<IncidentReportSummaryResponseDto> {
+    const scope = this.buildReportScope(actor, query);
+    return this.incidentReportRepository.getReportSummary(scope);
+  }
+
+  async listReports(
+    actor: ServiceActor,
+    query: ListIncidentReportsQueryDto,
+  ): Promise<OffsetPageResponseDto<IncidentReportEntity>> {
+    const scope = this.buildReportScope(actor, query);
+    const limit = query.limit ?? 20;
+    const offset = query.offset ?? 0;
+
+    const { items, total } =
+      await this.incidentReportRepository.findReportsPaginated(scope, {
+        status: query.status,
+        sortBy: query.sort_by ?? 'created_at',
+        sortOrder: query.sort_order ?? 'desc',
+        limit,
+        offset,
+      });
+
+    return OffsetPageResponseDto.from(items, total, limit, offset);
+  }
+
+  private buildReportScope(
+    actor: ServiceActor,
+    query: {
+      command_center_id?: string;
+      assigned_reporter_id?: string;
+    },
+  ): { commandCenterId?: string | null; reporterId?: string | null } {
+    const role: string = actor.role;
+
+    if (role === 'responder') {
+      return { reporterId: actor.id };
+    }
+
+    if (role === 'admin') {
+      if (!actor.commandCenterId) {
+        throw new ForbiddenException(
+          'Admin is not assigned to a command center',
+        );
+      }
+      return {
+        commandCenterId: actor.commandCenterId,
+        reporterId: query.assigned_reporter_id ?? undefined,
+      };
+    }
+
+    if (role === 'super') {
+      return {
+        commandCenterId: query.command_center_id ?? undefined,
+        reporterId: query.assigned_reporter_id ?? undefined,
+      };
+    }
+
+    throw new ForbiddenException('You cannot view incident reports');
   }
 
   @OnEvent('incident.sla_timeout')
@@ -943,6 +1118,41 @@ export class IncidentService {
           };
           this.events.emit(IncidentEvents.PEER_STAND_DOWN, event);
         },
+      );
+    }
+  }
+
+  /**
+   * FCM pushes for the RESOLVED status. The DB trigger
+   * incident_after_change already inserted the inbox rows for every
+   * responder in CLAIMED / EN_ROUTE / ARRIVED at resolve time — this
+   * just fans out the matching push. Wrapped in try/catch so a bad emit
+   * can never fail a resolve that already committed.
+   */
+  private async emitIncidentResolvedNotifications(
+    incidentId: string,
+  ): Promise<void> {
+    try {
+      const responderIds =
+        await this.incidentRepository.getActiveResponderIdsOnIncident(
+          incidentId,
+        );
+      for (const responderId of responderIds) {
+        this.events.emit('notification.created', {
+          userId: responderId,
+          title: 'Incident resolved',
+          body: 'The incident you were dispatched to has been resolved.',
+          type: 'incident_resolved',
+          tone: 'success',
+          relatedEntity: 'incident',
+          relatedEntityId: incidentId,
+          skipInbox: true,
+        });
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to emit resolved notifications for incident ${incidentId}`,
+        error instanceof Error ? error.stack : String(error),
       );
     }
   }

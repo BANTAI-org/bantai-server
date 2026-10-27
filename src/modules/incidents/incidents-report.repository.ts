@@ -1,11 +1,17 @@
 import { DatabaseService } from '../../database/database.service';
 import { IncidentDisposition } from './enums/incident-disposition.enum';
+import { ReportStatus } from './enums/report-status.enum';
 import { IncidentReportEntity } from './interfaces/incident-report-entity.interface';
 import {
   CreateReportData,
   ReviewResult,
   UpdateReportDraftData,
 } from './types/datas/incident-report-datas/create-report-data.types';
+import type { IncidentReportSummaryResponseDto } from './dto/incident-report-summary.dto';
+import type {
+  ReportSortBy,
+  SortOrder,
+} from './dto/list-incident-report-query.dto';
 
 import {
   CURSOR_COLUMN,
@@ -22,7 +28,6 @@ import {
 /**
  * Who may review a report: a super, or an admin of the report's own command
  * center. Expects the reviewer id as $2 and the report aliased as `r`.
- * (Policy assumption: change it here if admins may review across centers.)
  */
 const REVIEWER_IS_AUTHORIZED = `
   EXISTS (
@@ -33,7 +38,6 @@ const REVIEWER_IS_AUTHORIZED = `
             OR (u.role = 'admin' AND u.command_center_id = r.command_center_id))
   )`;
 
-/** Row shape of the lookup that labels a failed review (see diagnoseReviewFailure). */
 interface ReviewDiagnosisRow {
   status: string;
   command_center_id: string;
@@ -42,21 +46,35 @@ interface ReviewDiagnosisRow {
   reviewer_cc: string | null;
 }
 
+/**
+ * Concrete scope the service has already enforced. Both may be unset (super
+ * with no filters = global view).
+ */
+export interface ReportScope {
+  commandCenterId?: string | null;
+  reporterId?: string | null;
+}
+
+interface ReportSummaryRow {
+  total: number;
+  draft: number;
+  submitted: number;
+  under_review: number;
+  needs_revision: number;
+  approved: number;
+}
+
 export class IncidentReportRepository {
   constructor(private readonly db: DatabaseService) {}
 
-  /** Shared typed-rows helper (see cursor.util), bound to this repository's db. */
   private queryRows<T>(sql: string, params: unknown[]): Promise<T[]> {
     return queryRowsOn<T>(this.db, sql, params);
   }
 
-  /**
-   * Creates a report and returns its id.
-   * Returns null if reporter_id is not an active responder with a home command
-   * center. Throws on a duplicate report for the same incident and command
-   * center (23505), an unknown incident (23503), or status 'submitted' without
-   * a disposition (23514): map those in the service.
-   */
+  // ==================================================================
+  // EXISTING CRUD
+  // ==================================================================
+
   async createReport(data: CreateReportData): Promise<string | null> {
     const {
       incident_id,
@@ -98,15 +116,6 @@ export class IncidentReportRepository {
     return rows[0]?.id ?? null;
   }
 
-  /**
-   * The assigned reporter submits (or resubmits after a revision request).
-   * The database does not stamp submitted_at or clear review fields itself,
-   * and its consistency check rejects a 'submitted' row that still carries a
-   * reviewer, so both are handled here. reviewer_notes is kept so the
-   * reporter can still see what was asked for.
-   * Returns false if the report is not theirs or not in draft / needs_revision.
-   * Throws (23514) if no disposition exists yet.
-   */
   async submitReport(
     reportId: string,
     submitterId: string,
@@ -128,11 +137,6 @@ export class IncidentReportRepository {
     return result.rowCount === 1;
   }
 
-  /**
-   * Admin/super picks a submitted report up for review (submitted ->
-   * under_review). The schema requires reviewed_by to stay NULL in this state,
-   * so who is reviewing is not recorded until they approve or send it back.
-   */
   async startReportReview(
     reportId: string,
     reviewerId: string,
@@ -151,11 +155,6 @@ export class IncidentReportRepository {
       : this.diagnoseReviewFailure(reportId, reviewerId);
   }
 
-  /**
-   * Approves a submitted / under-review report. `notes` are optional and
-   * replace any earlier reviewer notes (so an approval never shows a stale
-   * "please fix X" from a previous round).
-   */
   async approveReport(
     reportId: string,
     reviewerId: string,
@@ -164,11 +163,6 @@ export class IncidentReportRepository {
     return this.finishReview(reportId, reviewerId, 'approved', notes ?? null);
   }
 
-  /**
-   * Sends a submitted / under-review report back to its reporter. `notes` are
-   * required by the schema (and shown to the reporter): validate that they
-   * are non-blank before calling.
-   */
   async requestReportRevision(
     reportId: string,
     reviewerId: string,
@@ -177,8 +171,6 @@ export class IncidentReportRepository {
     return this.finishReview(reportId, reviewerId, 'needs_revision', notes);
   }
 
-  // The status guard matters: the schema alone would let a draft be approved
-  // straight away, as long as a reviewer is recorded.
   private async finishReview(
     reportId: string,
     reviewerId: string,
@@ -202,10 +194,6 @@ export class IncidentReportRepository {
       : this.diagnoseReviewFailure(reportId, reviewerId);
   }
 
-  /**
-   * Labels a zero-row review update. Read-only and not atomic with the update;
-   * it only picks the message, so a race can at worst mislabel a failure.
-   */
   private async diagnoseReviewFailure(
     reportId: string,
     reviewerId: string,
@@ -230,15 +218,6 @@ export class IncidentReportRepository {
     return 'not_reviewable';
   }
 
-  /**
-   * The assigned reporter edits their report while it is a draft or has been
-   * sent back for revision. Omit a field to leave it, send null to clear a
-   * nullable one. Returns the updated report, or null if nothing changed:
-   * no fields given, or the report is not theirs / not editable any more.
-   * Reviewer fields and notes are untouched, so a report under revision keeps
-   * the reviewer's request visible while it is being fixed.
-   * Throws (23514) if clearing the disposition of a report that is no longer a draft.
-   */
   async updateReportDraft(
     reportId: string,
     reporterId: string,
@@ -246,7 +225,6 @@ export class IncidentReportRepository {
   ): Promise<IncidentReportEntity | null> {
     const params: unknown[] = [reportId, reporterId];
     const sets: string[] = [];
-    // Column names come from this fixed list, never from the caller.
     const set = (column: string, cast: string, value: unknown): void => {
       params.push(value);
       sets.push(`${column} = $${params.length}::${cast}`);
@@ -283,22 +261,12 @@ export class IncidentReportRepository {
     return rows[0] ?? null;
   }
 
-  /**
-   * The admin review queue: submitted and under-review reports, OLDEST first
-   * (first in, first reviewed), one cursor page at a time. Pass a command
-   * center id for an admin's own queue, or null for a super's view of all.
-   * There is no dedicated index for this queue (the needs_action index covers
-   * draft / needs_revision only); the command-center index is enough until the
-   * table is large. Throws InvalidCursorError for a bad cursor.
-   */
   async findReportsAwaitingReview(
     commandCenterId: string | null,
     { limit, cursor }: PageOptions = {},
   ): Promise<CursorPage<IncidentReportEntity>> {
     const size = clampLimit(limit);
     const params: unknown[] = [commandCenterId];
-    // submitted_at is app-stamped, not DB-enforced: fall back to created_at so
-    // a row without it can never break the sort key.
     const sortAt = 'COALESCE(r.submitted_at, r.created_at)';
     const keyset = keysetPredicate(cursor, params, sortAt, 'r.id', '>');
     params.push(size + 1);
@@ -321,5 +289,161 @@ export class IncidentReportRepository {
       items: page.items.map((r) => stripCursorColumn(r)),
       nextCursor: page.nextCursor,
     };
+  }
+
+  // ==================================================================
+  // NEW: summary + offset-paginated list
+  // ==================================================================
+
+  async getReportSummary(
+    scope: ReportScope,
+  ): Promise<IncidentReportSummaryResponseDto> {
+    const { sql: whereSql, params } = this.buildScopeWhere(scope);
+
+    const rows = await this.queryRows<ReportSummaryRow>(
+      `SELECT
+         COUNT(*)::int AS total,
+         COUNT(*) FILTER (WHERE r.status = 'draft')::int          AS draft,
+         COUNT(*) FILTER (WHERE r.status = 'submitted')::int      AS submitted,
+         COUNT(*) FILTER (WHERE r.status = 'under_review')::int   AS under_review,
+         COUNT(*) FILTER (WHERE r.status = 'needs_revision')::int AS needs_revision,
+         COUNT(*) FILTER (WHERE r.status = 'approved')::int       AS approved
+       FROM incident_report r
+       WHERE ${whereSql}`,
+      params,
+    );
+
+    const row: ReportSummaryRow = rows[0] ?? {
+      total: 0,
+      draft: 0,
+      submitted: 0,
+      under_review: 0,
+      needs_revision: 0,
+      approved: 0,
+    };
+
+    const pendingReview = row.submitted + row.under_review;
+
+    return {
+      total: row.total,
+      draft: row.draft,
+      submitted: row.submitted,
+      under_review: row.under_review,
+      needs_revision: row.needs_revision,
+      approved: row.approved,
+      pending_review: pendingReview,
+      awaiting_verification: pendingReview,
+      request_revision: row.needs_revision,
+      awaiting_submission: row.draft,
+    };
+  }
+
+  async findReportsPaginated(
+    scope: ReportScope,
+    filters: {
+      status?: ReportStatus;
+      sortBy: ReportSortBy;
+      sortOrder: SortOrder;
+      limit: number;
+      offset: number;
+    },
+  ): Promise<{ items: IncidentReportEntity[]; total: number }> {
+    const { sql: scopeSql, params: scopeParams } = this.buildScopeWhere(scope);
+    const params: unknown[] = [...scopeParams];
+    const conditions: string[] = [scopeSql];
+
+    if (filters.status) {
+      params.push(filters.status);
+      conditions.push(`r.status = $${params.length}::report_status`);
+    }
+
+    const whereSql = conditions.join(' AND ');
+    const orderBy = this.buildOrderBy(filters.sortBy, filters.sortOrder);
+
+    // Total — same WHERE, no pagination
+    const totalRows = await this.queryRows<{ total: number }>(
+      `SELECT COUNT(*)::int AS total FROM incident_report r WHERE ${whereSql}`,
+      params,
+    );
+    const total = totalRows[0]?.total ?? 0;
+
+    if (total === 0) return { items: [], total: 0 };
+
+    // Page — same WHERE, plus LIMIT/OFFSET. Short-circuit if offset is past end.
+    if (filters.offset >= total) return { items: [], total };
+
+    const pageParams = [...params, filters.limit, filters.offset];
+    const limitParam = params.length + 1;
+    const offsetParam = params.length + 2;
+
+    const items = await this.queryRows<IncidentReportEntity>(
+      `SELECT r.*
+         FROM incident_report r
+        WHERE ${whereSql}
+        ORDER BY ${orderBy}
+        LIMIT $${limitParam} OFFSET $${offsetParam}`,
+      pageParams,
+    );
+
+    return { items, total };
+  }
+
+  // ==================================================================
+  // helpers
+  // ==================================================================
+
+  /**
+   * Turns a role-enforced ReportScope into a WHERE fragment.
+   * Returns `'TRUE'` when nothing is set, so callers can always join it.
+   */
+  private buildScopeWhere(scope: ReportScope): {
+    sql: string;
+    params: unknown[];
+  } {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (scope.commandCenterId) {
+      params.push(scope.commandCenterId);
+      conditions.push(`r.command_center_id = $${params.length}::uuid`);
+    }
+    if (scope.reporterId) {
+      params.push(scope.reporterId);
+      conditions.push(`r.assigned_reporter_id = $${params.length}::uuid`);
+    }
+
+    return {
+      sql: conditions.length > 0 ? conditions.join(' AND ') : 'TRUE',
+      params,
+    };
+  }
+
+  /**
+   * ORDER BY fragment. `sortBy` / `sortOrder` are pre-validated by the DTO,
+   * so interpolating them is safe (no user-controlled fragments reach this).
+   *
+   * Status sort uses the natural workflow order so "sort by status" reads
+   * left-to-right as the report moves through its lifecycle.
+   */
+  private buildOrderBy(sortBy: ReportSortBy, sortOrder: SortOrder): string {
+    const dir = sortOrder === 'asc' ? 'ASC' : 'DESC';
+    switch (sortBy) {
+      case 'status':
+        return `CASE r.status
+                  WHEN 'draft'          THEN 1
+                  WHEN 'submitted'      THEN 2
+                  WHEN 'under_review'   THEN 3
+                  WHEN 'needs_revision' THEN 4
+                  WHEN 'approved'       THEN 5
+                END ${dir}, r.created_at DESC, r.id DESC`;
+      case 'created_at':
+        return `r.created_at ${dir}, r.id ${dir}`;
+      case 'updated_at':
+        return `r.updated_at ${dir}, r.id ${dir}`;
+      case 'submitted_at':
+        return `r.submitted_at ${dir} NULLS LAST, r.id ${dir}`;
+      case 'reviewed_at':
+        return `r.reviewed_at ${dir} NULLS LAST, r.id ${dir}`;
+    }
   }
 }

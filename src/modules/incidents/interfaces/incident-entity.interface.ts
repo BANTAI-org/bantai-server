@@ -7,11 +7,29 @@ import { IncidentSeverity } from '../enums/incident-severity.enum';
 import { IncidentStatus } from '../enums/incident-status.enum';
 import { IncidentOutcome } from '../enums/incident-outcome.enum';
 import { GeoPoint } from '../../../common/interfaces/geo-location.interface';
+import { DriverBrief } from './driver-brief.interface';
+
 export interface IncidentEntity {
   id: string;
 
   /** NULL only for CENTER_MANUAL incidents (walk-in report, rider not registered). */
   driver_id: string | null;
+
+  /**
+   * Enriched driver profile, populated ONLY on responder / peer-driver reads:
+   *   * GET /incidents/:id             (role responder, or peer driver)
+   *   * GET /incidents/assignment/current   (claimant, always 'full')
+   *   * GET /incidents/assignment/history   (claimant history, always 'full')
+   *   * GET /incidents/assignment/offers    (always 'minimal')
+   *
+   * Undefined everywhere else on purpose (driver-facing lists, super
+   * dashboard, incident-logs, internal event payloads) so driver PII
+   * never leaks into a broader response. Null when driver_id is null,
+   * when the driver row is soft-deleted, or when the viewer is the
+   * driver themselves.
+   */
+  driver?: DriverBrief | null;
+
   device_id: string | null;
   location: GeoPoint;
 

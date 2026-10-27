@@ -25,8 +25,19 @@ import { UpdateReportDraftDto } from './dto/report-draft.dto';
 import { ApproveReportDto } from './dto/approve-report.dto';
 import { RequestReportRevisionDto } from './dto/request-report.revision.dto';
 import { SubmitIncidentReportDto } from './dto/submit-incident-report.dto';
+import {
+  IncidentReportSummaryQueryDto,
+  IncidentReportSummaryResponseDto,
+} from './dto/incident-report-summary.dto';
+
+import {
+  ListIncidentReportsQueryDto,
+  REPORT_SORT_BY_VALUES,
+  SORT_ORDER_VALUES,
+} from './dto/list-incident-report-query.dto';
 import { IncidentService, ServiceActor } from './incidents.service';
 import { IncidentReportEntity } from './interfaces/incident-report-entity.interface';
+import { OffsetPageResponseDto } from '../../common/dto/offset-based-pagination.dto';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -65,6 +76,80 @@ export class IncidentReportController {
     @CurrentUser('sub') userId: string,
   ): Promise<{ id: string }> {
     return { id: await this.incidentService.createReport(dto, userId) };
+  }
+
+  // ==================================================================
+  // NEW — Summary counts. Must come before @Get(':reportId').
+  // ==================================================================
+  @Get('summary')
+  @ApiOperation({
+    summary: 'Get per-status report counts for the caller’s scope',
+    description:
+      'Responder: only their own. Admin: only their command center. Super: everything, or filtered by command_center_id / assigned_reporter_id.',
+  })
+  @ApiQuery({ name: 'command_center_id', required: false, type: String })
+  @ApiQuery({ name: 'assigned_reporter_id', required: false, type: String })
+  @ApiResponse({ status: 200, type: IncidentReportSummaryResponseDto })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @Roles(...ANY_USER)
+  @ApiRoles(...ANY_USER)
+  async summary(
+    @Query() query: IncidentReportSummaryQueryDto,
+    @CurrentUser('sub') userId: string,
+    @CurrentUser('role') role: Role,
+    @CurrentUser('command_center_id') commandCenterId?: string,
+  ): Promise<IncidentReportSummaryResponseDto> {
+    const actor: ServiceActor = {
+      id: userId,
+      role,
+      commandCenterId: commandCenterId ?? null,
+    };
+    return this.incidentService.getReportSummary(actor, query);
+  }
+
+  // ==================================================================
+  // NEW — Offset-paginated list. Must come before @Get(':reportId').
+  // ==================================================================
+  @Get()
+  @ApiOperation({
+    summary: 'List incident reports with offset pagination',
+    description:
+      'Role-scoped like /summary. Sortable by status or date. Filter by exact status.',
+  })
+  @ApiQuery({ name: 'status', required: false, type: String })
+  @ApiQuery({
+    name: 'sort_by',
+    required: false,
+    enum: REPORT_SORT_BY_VALUES,
+  })
+  @ApiQuery({
+    name: 'sort_order',
+    required: false,
+    enum: SORT_ORDER_VALUES,
+  })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'offset', required: false, type: Number })
+  @ApiQuery({ name: 'command_center_id', required: false, type: String })
+  @ApiQuery({ name: 'assigned_reporter_id', required: false, type: String })
+  @ApiResponse({
+    status: 200,
+    description: 'Offset page of incident reports',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @Roles(...ANY_USER)
+  @ApiRoles(...ANY_USER)
+  async list(
+    @Query() query: ListIncidentReportsQueryDto,
+    @CurrentUser('sub') userId: string,
+    @CurrentUser('role') role: Role,
+    @CurrentUser('command_center_id') commandCenterId?: string,
+  ): Promise<OffsetPageResponseDto<IncidentReportEntity>> {
+    const actor: ServiceActor = {
+      id: userId,
+      role,
+      commandCenterId: commandCenterId ?? null,
+    };
+    return this.incidentService.listReports(actor, query);
   }
 
   // Declared before :reportId so "awaiting-review" is not read as an id.
