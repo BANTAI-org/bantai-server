@@ -24,6 +24,7 @@ import { DashboardModule } from '../modules/dashboard/dashboard.module';
 import { StorageModule } from '../modules/storage/s3.module';
 import { CommunicationsModule } from '../modules/communications/comms.module';
 import { NotificationsModule } from '../modules/notifications/notifications.module';
+import { RedisModule } from '../modules/redis/redis.module';
 
 /**
  * Filters the generated Swagger document based on allowed roles.
@@ -200,6 +201,14 @@ async function generate(): Promise<void> {
     'driver-app-swagger.json',
     'Bantai Driver Mobile API',
     [],
+    ['DRIVER', 'public'],
+  );
+  // Driver Mobile App (Only endpoints for Drivers + Public)
+  await generateSwaggerDoc(
+    app,
+    'driver-app-swagger.json',
+    'Bantai Driver Mobile API',
+    [DriverModule, StorageModule, RedisModule],
     ['DRIVER', 'public'],
   );
 
