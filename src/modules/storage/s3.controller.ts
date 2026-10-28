@@ -91,9 +91,65 @@ export class StorageController {
     return { uploadUrl: url, objectKey: key };
   }
 
+  // =====================================================================
+  // NEW: Single PUT Upload for Evidence Photos
+  // =====================================================================
+  @Post('evidence/upload-url')
+  @Roles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
+  @ApiOperation({
+    summary: 'Get a presigned URL to upload a single evidence image',
+    description: 'Used for quick uploads of scene photos by responders or drivers.',
+  })
+  @ApiBody({ type: RequestUploadUrlDto })
+  @ApiQuery({
+    name: 'incidentId',
+    required: false,
+    description: 'Link the image to an incident',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Returns the upload URL and object key',
+  })
+  @ApiResponse({ status: 400, description: 'Invalid evidence image type' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async getEvidenceUploadUrl(
+    @Body() dto: RequestUploadUrlDto,
+    @CurrentUser('sub') userId: string,
+    @Query('incidentId') incidentId?: string,
+  ): Promise<{ uploadUrl: string; objectKey: string }> {
+    const rawExtension = dto.contentType.split('/')[1]?.toLowerCase() || '';
+    const extension = rawExtension.split('+')[0];
+
+    // Only allow image types for this single upload endpoint
+    if (!['jpg', 'jpeg', 'png', 'webp'].includes(extension)) {
+      throw new BadRequestException(
+        `Invalid image type. Allowed: jpg, jpeg, png, webp`,
+      );
+    }
+
+    const folder = incidentId
+      ? `incidents/${incidentId}`
+      : `unlinked/${userId}`;
+    const key = `${folder}/evidence_${userId}_${Date.now()}.${extension}`;
+
+    const bucket = this.configService.getOrThrow<string>('R2_BUCKET_EVIDENCES');
+
+    const url = await this.s3Service.generatePresignedUploadUrl(
+      bucket,
+      key,
+      dto.contentType,
+      dto.fileSize,
+    );
+    return { uploadUrl: url, objectKey: key };
+  }
+
+  // =====================================================================
+  // Multipart Upload for Evidence Videos (Now allows RESPONDERS)
+  // =====================================================================
   @Post('evidence/multipart/initiate')
-  @Roles(Role.DRIVER, Role.ADMIN, Role.SUPER)
-  @ApiRoles(Role.DRIVER, Role.ADMIN, Role.SUPER)
+  @Roles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
   @ApiOperation({
     summary: 'Step 1: Initiate a multipart upload for large videos',
   })
@@ -136,8 +192,8 @@ export class StorageController {
   }
 
   @Post('evidence/multipart/sign-parts')
-  @Roles(Role.DRIVER, Role.ADMIN, Role.SUPER)
-  @ApiRoles(Role.DRIVER, Role.ADMIN, Role.SUPER)
+  @Roles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
   @ApiOperation({ summary: 'Step 2: Get presigned URLs for the video chunks' })
   @ApiBody({ type: SignPartsDto })
   @ApiResponse({
@@ -160,8 +216,8 @@ export class StorageController {
   }
 
   @Post('evidence/multipart/complete')
-  @Roles(Role.DRIVER, Role.ADMIN, Role.SUPER)
-  @ApiRoles(Role.DRIVER, Role.ADMIN, Role.SUPER)
+  @Roles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
+  @ApiRoles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
   @ApiOperation({ summary: 'Step 3: Complete the upload by sending the ETags' })
   @ApiBody({ type: CompleteMultipartDto })
   @ApiResponse({
@@ -213,10 +269,6 @@ export class StorageController {
         'Invalid bucket specified. Use "profile" or "evidence".',
       );
     }
-
-    // TODO: In V2, verify that the caller is actually authorized to view
-    // the incident referenced in the key (e.g. `incidents/<id>/...`).
-    // For now, users must be authenticated to get the presigned URL.
 
     const url = await this.s3Service.generatePresignedDownloadUrl(
       bucketName,
