@@ -44,10 +44,16 @@ export class S3Service {
    * Generates a Presigned PUT URL for a single-file upload.
    * The client should use this URL to PUT the file directly to R2.
    *
-   * @param {string} bucket - The name of the R2 bucket (e.g., 'bantai-profile-images').
-   * @param {string} key - The exact object key/path (e.g., 'users/123/avatar.jpg').
-   * @param {string} contentType - The MIME type (e.g., 'image/jpeg'). This is strictly enforced by R2.
-   * @param {number} contentLength - The exact file size in bytes. Enforced to prevent oversized uploads.
+   * NOTE: We intentionally OMIT ContentLength from the command. Including it
+   * forces the signature to strictly match the exact byte size. If a client
+   * (Flutter, Thunder Client, browser) compresses the file or formats the
+   * body differently, R2 will reject it with a SignatureDoesNotMatch.
+   * By omitting it, R2 will accept the file regardless of its size.
+   *
+   * @param {string} bucket - The name of the R2 bucket.
+   * @param {string} key - The exact object key/path.
+   * @param {string} contentType - The MIME type (e.g., 'image/jpeg').
+   * @param {number} contentLength - The file size in bytes (unused for signing, kept for API compatibility).
    * @param {number} [expiresInSeconds=900] - URL validity duration (default 15 mins).
    * @returns {Promise<string>} The presigned PUT URL.
    */
@@ -55,14 +61,14 @@ export class S3Service {
     bucket: string,
     key: string,
     contentType: string,
-    contentLength: number,
+    contentLength: number, // Kept in signature so we don't break the Controller
     expiresInSeconds = 900,
   ): Promise<string> {
     const command = new PutObjectCommand({
       Bucket: bucket,
       Key: key,
       ContentType: contentType,
-      ContentLength: contentLength,
+      // ContentLength: contentLength, <-- REMOVED: This was causing the SignatureDoesNotMatch
     });
 
     return getSignedUrl(this.s3Client, command, {
