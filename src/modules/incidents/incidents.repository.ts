@@ -818,6 +818,7 @@ export class IncidentRepository {
        FROM incident i
       WHERE i.claimed_by_id = $1::uuid
         AND i.outcome = 'unresolved'
+        AND i.status NOT IN ('RESOLVED', 'CANCELLED')
       ORDER BY i.claimed_at DESC`,
       [responderId],
     );
