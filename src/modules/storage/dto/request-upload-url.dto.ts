@@ -26,6 +26,6 @@ export class RequestUploadUrlDto {
   })
   @IsNumber()
   @Min(1024)
-  @Max(5 * 1024 * 1024)
+  @Max(20 * 1024 * 1024)
   fileSize!: number;
 }
