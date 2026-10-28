@@ -67,7 +67,7 @@ const INCIDENT_COLUMNS = `
   i.escalated_at, i.resolved_at, i.cancelled_at, i.resolved_by_id,
   i.verified_by_id, i.verified_at, i.verification_notes,
   i.created_at, i.updated_at,
-  (SELECT r.id FROM incident_report r WHERE r.incident_id = i.id LIMIT 1) AS report_id`;
+  (SELECT r.id FROM incident_report r WHERE r.incident_id = i.id ORDER BY r.created_at DESC LIMIT 1) AS report_id`;
 
 const DRIVER_BRIEF_SELECT = `
   u.id                          AS user_id,
