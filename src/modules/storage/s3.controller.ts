@@ -99,7 +99,8 @@ export class StorageController {
   @ApiRoles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
   @ApiOperation({
     summary: 'Get a presigned URL to upload a single evidence image',
-    description: 'Used for quick uploads of scene photos by responders or drivers.',
+    description:
+      'Used for quick uploads of scene photos by responders or drivers.',
   })
   @ApiBody({ type: RequestUploadUrlDto })
   @ApiQuery({
