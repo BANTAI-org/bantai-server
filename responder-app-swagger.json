@@ -359,6 +359,10 @@
           }
         }
       },
+      "ChangePassAndIssueNewRefreshTokenDTO": {
+        "type": "object",
+        "properties": {}
+      },
       "SendOtpDto": {
         "type": "object",
         "properties": {
@@ -692,6 +696,11 @@
             "description": "New Philippine mobile number in E.164 format",
             "example": "+639171234567"
           },
+          "avatar_url": {
+            "type": "object",
+            "description": "The R2 object key returned from the profile image upload endpoint",
+            "example": "users/123/avatar.jpg"
+          },
           "otp_code": {
             "type": "string",
             "description": "Six-digit OTP for verifying a changed mobile number",
@@ -844,11 +853,6 @@
             "description": "R2 object key for the evidence file",
             "example": "incidents/123/evidence/photo.jpg"
           },
-          "url": {
-            "type": "string",
-            "description": "Public or signed URL for the evidence file",
-            "example": "https://storage.example.com/evidence/photo.jpg"
-          },
           "view": {
             "type": "string",
             "description": "Evidence camera or image view",
@@ -857,29 +861,12 @@
           "type": {
             "type": "string",
             "description": "Evidence media type",
-            "example": "photo"
-          },
-          "content_type": {
-            "type": "string",
-            "description": "Evidence MIME type",
-            "example": "image/jpeg"
-          },
-          "size_bytes": {
-            "type": "number",
-            "description": "Evidence file size in bytes",
-            "example": 248320
-          },
-          "uploaded_at": {
-            "type": "string",
-            "description": "Evidence upload timestamp in ISO 8601 format",
-            "example": "2026-10-23T01:30:00.000Z"
-          },
-          "duration_s": {
-            "type": "number",
-            "description": "Media duration in seconds",
-            "example": 18.5
+            "example": "video"
           }
-        }
+        },
+        "required": [
+          "key"
+        ]
       },
       "CreateIncidentDto": {
         "type": "object",
@@ -937,8 +924,13 @@
           },
           "device_id": {
             "type": "object",
-            "description": "Source device UUID; required for EDGE_AI incidents",
+            "description": "Source device UUID; used for EDGE_AI incidents",
             "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          },
+          "hardware_serial": {
+            "type": "object",
+            "description": "Source device Hardware Serial; used for EDGE_AI if device_id is omitted",
+            "example": "KVM-YOLO-QUEZON-CITY-01"
           },
           "driver_id": {
             "type": "object",
@@ -1107,6 +1099,19 @@
           "reason"
         ]
       },
+      "AssignResponderDto": {
+        "type": "object",
+        "properties": {
+          "responder_id": {
+            "type": "string",
+            "description": "UUID of the responder to assign",
+            "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          }
+        },
+        "required": [
+          "responder_id"
+        ]
+      },
       "CreateIncidentReportDto": {
         "type": "object",
         "properties": {
@@ -1160,6 +1165,57 @@
         "required": [
           "incident_id",
           "summary"
+        ]
+      },
+      "IncidentReportSummaryResponseDto": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number"
+          },
+          "draft": {
+            "type": "number"
+          },
+          "submitted": {
+            "type": "number"
+          },
+          "under_review": {
+            "type": "number"
+          },
+          "needs_revision": {
+            "type": "number"
+          },
+          "approved": {
+            "type": "number"
+          },
+          "pending_review": {
+            "type": "number",
+            "description": "submitted + under_review"
+          },
+          "awaiting_verification": {
+            "type": "number",
+            "description": "Alias of pending_review"
+          },
+          "request_revision": {
+            "type": "number",
+            "description": "Alias of needs_revision"
+          },
+          "awaiting_submission": {
+            "type": "number",
+            "description": "Alias of draft"
+          }
+        },
+        "required": [
+          "total",
+          "draft",
+          "submitted",
+          "under_review",
+          "needs_revision",
+          "approved",
+          "pending_review",
+          "awaiting_verification",
+          "request_revision",
+          "awaiting_submission"
         ]
       },
       "UpdateReportDraftDto": {
@@ -1262,8 +1318,13 @@
         "properties": {
           "deviceId": {
             "type": "string",
-            "description": "Device UUID to pair",
+            "description": "Device UUID to pair. Provide either this or hardwareSerial — at least one is required.",
             "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          },
+          "hardwareSerial": {
+            "type": "string",
+            "description": "Hardware serial scanned from the QR sticker. Provide either this or deviceId — at least one is required.",
+            "example": "BANTAI-CAM-000123"
           },
           "driverId": {
             "type": "string",
@@ -1272,7 +1333,6 @@
           }
         },
         "required": [
-          "deviceId",
           "driverId"
         ]
       },
@@ -1463,6 +1523,53 @@
         "required": [
           "fcmToken",
           "deviceType"
+        ]
+      },
+      "ShiftStatusDto": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "driver",
+              "responder"
+            ]
+          },
+          "on_duty": {
+            "type": "boolean",
+            "description": "on_duty for responders, duty_status = 'on_duty' for drivers"
+          },
+          "shift_ends_at": {
+            "type": "string",
+            "nullable": true,
+            "description": "ISO timestamp when the current shift auto-ends"
+          },
+          "remaining_seconds": {
+            "type": "number",
+            "nullable": true,
+            "description": "Seconds until shift_ends_at. Null when off duty or no timer. Clamped to 0 when already expired (between cron ticks)."
+          }
+        },
+        "required": [
+          "role",
+          "on_duty",
+          "shift_ends_at",
+          "remaining_seconds"
+        ]
+      },
+      "ExtendShiftDto": {
+        "type": "object",
+        "properties": {
+          "minutes": {
+            "type": "number",
+            "description": "Minutes to add to the current shift_ends_at. Clamped so an already-expired shift starts counting from now.",
+            "example": 60,
+            "minimum": 1,
+            "maximum": 720
+          }
+        },
+        "required": [
+          "minutes"
         ]
       }
     }

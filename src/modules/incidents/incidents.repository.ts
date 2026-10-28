@@ -809,6 +809,21 @@ export class IncidentRepository {
     return enriched;
   }
 
+  async findUnresolvedIncidentsForResponder(
+    responderId: string,
+  ): Promise<IncidentEntity[]> {
+    const rows = await queryRows<IncidentRow>(
+      this.db,
+      `SELECT ${INCIDENT_COLUMNS}
+       FROM incident i
+      WHERE i.claimed_by_id = $1::uuid
+        AND i.outcome = 'unresolved'
+      ORDER BY i.claimed_at DESC`,
+      [responderId],
+    );
+    return this.attachDriverBriefs(rows.map(toIncident), 'full');
+  }
+
   async findPendingOffers(responderId: string): Promise<IncidentEntity[]> {
     const rows = await queryRows<IncidentRow>(
       this.db,

@@ -247,6 +247,14 @@ export class IncidentService {
     return this.incidentRepository.findCurrentAssignment(responderId);
   }
 
+  async getUnresolvedIncidentsForResponder(
+    responderId: string,
+  ): Promise<IncidentEntity[]> {
+    return this.incidentRepository.findUnresolvedIncidentsForResponder(
+      responderId,
+    );
+  }
+
   async getPendingOffers(responderId: string): Promise<IncidentEntity[]> {
     return this.incidentRepository.findPendingOffers(responderId);
   }

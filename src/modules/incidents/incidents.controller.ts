@@ -178,6 +178,22 @@ export class IncidentController {
     return assignment;
   }
 
+  @Get('unresolved')
+  @ApiOperation({
+    summary: 'List unresolved incidents for the authenticated responder',
+    description:
+      'Returns incidents claimed by this responder that have not yet been resolved.',
+  })
+  @ApiResponse({ status: 200, description: 'Unresolved incidents returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @Roles(Role.RESPONDER)
+  @ApiRoles(Role.RESPONDER)
+  async getUnresolvedIncidents(
+    @CurrentUser('sub') responderId: string,
+  ): Promise<IncidentEntity[]> {
+    return this.incidentService.getUnresolvedIncidentsForResponder(responderId);
+  }
+
   @Get('assignment/offers')
   @ApiOperation({
     summary: 'Get pending wave offers for the authenticated responder',
