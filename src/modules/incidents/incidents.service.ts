@@ -29,7 +29,8 @@ import type {
   IncidentReportSummaryQueryDto,
   IncidentReportSummaryResponseDto,
 } from './dto/incident-report-summary.dto';
-import { ListIncidentReportsQueryDto } from './dto/list-incident-report-query.dto';
+import type { ListIncidentReportsQueryDto } from './dto/list-incident-report-query.dto';
+import type { IncidentTimelineResponse } from './interfaces/timeline-event.interface';
 import { OffsetPageResponseDto } from '../../common/dto/offset-based-pagination.dto';
 import {
   IncidentCreatedEvent,
@@ -569,8 +570,7 @@ export class IncidentService {
 
       // The DB trigger incident_after_change already inserted the
       // notification row for the claimant. Skip the inbox insert so we
-      // don't duplicate, but still emit so FCM fires. Title / body /
-      // type / relatedEntityId must match the trigger's row exactly.
+      // don't duplicate, but still emit so FCM fires.
       if (incident.claimed_by_id) {
         this.events.emit('notification.created', {
           userId: incident.claimed_by_id,
@@ -587,16 +587,6 @@ export class IncidentService {
     return id;
   }
 
-  /**
-   * Center-assigned dispatch: bypasses the wave engine on an already
-   * ESCALATED incident. The DB trigger handle_center_assignment writes
-   * the inbox notification and audit row on INSERT, so this method only
-   * emits the FCM push.
-   *
-   * The inserted assignment has status = OFFERED; the responder then
-   * claims it via POST /incidents/:id/claim, and the state machine
-   * moves the incident from ESCALATED to CLAIMED as usual.
-   */
   async assignResponderByCenter(
     incidentId: string,
     responderId: string,
@@ -630,10 +620,6 @@ export class IncidentService {
       throw error;
     }
 
-    // The DB trigger handle_center_assignment already inserted the inbox
-    // row. Skip the inbox insert so we don't duplicate, but still emit so
-    // FCM fires. Title / body / type / relatedEntityId must match the
-    // trigger's row exactly.
     this.events.emit('notification.created', {
       userId: responderId,
       title: 'New dispatch assignment',
@@ -707,6 +693,23 @@ export class IncidentService {
     }
 
     return this.getIncident(incidentId);
+  }
+
+  async getTimeline(
+    incidentId: string,
+    userId: string,
+    role: Role,
+  ): Promise<IncidentTimelineResponse> {
+    const allowed = await this.incidentRepository.canUserViewIncident(
+      incidentId,
+      userId,
+      role,
+    );
+    if (!allowed) throw new ForbiddenException('You cannot view this incident');
+
+    const events =
+      await this.incidentRepository.getIncidentTimeline(incidentId);
+    return { incident_id: incidentId, events };
   }
 
   listIncidentsByStatus(
@@ -941,6 +944,9 @@ export class IncidentService {
     }
     return this.withValidCursor(() =>
       this.incidentReportRepository.findReportsAwaitingReview(commandCenterId, {
+        trigger_sources: query.trigger_sources,
+        from_date: query.from_date,
+        to_date: query.to_date,
         limit: query.limit,
         cursor: query.cursor,
       }),
@@ -952,7 +958,14 @@ export class IncidentService {
     query: IncidentReportSummaryQueryDto,
   ): Promise<IncidentReportSummaryResponseDto> {
     const scope = this.buildReportScope(actor, query);
-    return this.incidentReportRepository.getReportSummary(scope);
+    return this.incidentReportRepository.getReportSummary(scope, {
+      status: query.status,
+      statuses: query.statuses,
+      incident_statuses: query.incident_statuses,
+      trigger_sources: query.trigger_sources,
+      from_date: query.from_date,
+      to_date: query.to_date,
+    });
   }
 
   async listReports(
@@ -966,7 +979,12 @@ export class IncidentService {
     const { items, total } =
       await this.incidentReportRepository.findReportsPaginated(scope, {
         status: query.status,
-        sortBy: query.sort_by ?? 'created_at',
+        statuses: query.statuses,
+        incident_statuses: query.incident_statuses,
+        trigger_sources: query.trigger_sources,
+        from_date: query.from_date,
+        to_date: query.to_date,
+        sortBy: query.sort_by ?? 'submitted_at',
         sortOrder: query.sort_order ?? 'desc',
         limit,
         offset,
@@ -1122,13 +1140,6 @@ export class IncidentService {
     }
   }
 
-  /**
-   * FCM pushes for the RESOLVED status. The DB trigger
-   * incident_after_change already inserted the inbox rows for every
-   * responder in CLAIMED / EN_ROUTE / ARRIVED at resolve time — this
-   * just fans out the matching push. Wrapped in try/catch so a bad emit
-   * can never fail a resolve that already committed.
-   */
   private async emitIncidentResolvedNotifications(
     incidentId: string,
   ): Promise<void> {

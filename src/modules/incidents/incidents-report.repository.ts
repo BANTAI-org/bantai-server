@@ -1,6 +1,10 @@
 import { DatabaseService } from '../../database/database.service';
 import { IncidentDisposition } from './enums/incident-disposition.enum';
 import { ReportStatus } from './enums/report-status.enum';
+import { IncidentStatus } from './enums/incident-status.enum';
+import { ThreatCategory } from './enums/threat-category.enum';
+import { ThreatLevel } from './enums/threat-level.enum';
+import { TriggerSource } from './enums/trigger-source.enum';
 import { IncidentReportEntity } from './interfaces/incident-report-entity.interface';
 import {
   CreateReportData,
@@ -16,7 +20,6 @@ import type {
 import {
   CURSOR_COLUMN,
   CursorPage,
-  PageOptions,
   clampLimit,
   cursorTsSql,
   keysetPredicate,
@@ -25,10 +28,6 @@ import {
   toPage,
 } from '../../common/utils/cursor-pagination-helper.util';
 
-/**
- * Who may review a report: a super, or an admin of the report's own command
- * center. Expects the reviewer id as $2 and the report aliased as `r`.
- */
 const REVIEWER_IS_AUTHORIZED = `
   EXISTS (
     SELECT 1 FROM user_account u
@@ -38,6 +37,17 @@ const REVIEWER_IS_AUTHORIZED = `
             OR (u.role = 'admin' AND u.command_center_id = r.command_center_id))
   )`;
 
+const INCIDENT_REPORT_SELECT = `
+  r.*,
+  i.status              AS incident_status,
+  i.threat_category     AS incident_threat_category,
+  i.threat_level        AS incident_threat_level,
+  i.verified_at         AS incident_verified_at,
+  i.verified_by_id      AS incident_verified_by_id,
+  i.trigger_source      AS incident_trigger_source,
+  i.claimed_by_id       AS incident_claimed_by_id,
+  cu.f_name || ' ' || cu.l_name AS incident_claimed_by_name`;
+
 interface ReviewDiagnosisRow {
   status: string;
   command_center_id: string;
@@ -46,10 +56,6 @@ interface ReviewDiagnosisRow {
   reviewer_cc: string | null;
 }
 
-/**
- * Concrete scope the service has already enforced. Both may be unset (super
- * with no filters = global view).
- */
 export interface ReportScope {
   commandCenterId?: string | null;
   reporterId?: string | null;
@@ -64,6 +70,69 @@ interface ReportSummaryRow {
   approved: number;
 }
 
+interface IncidentReportRow extends Record<string, unknown> {
+  id: string;
+  incident_id: string;
+  command_center_id: string;
+  assigned_reporter_id: string | null;
+  submitted_by_id: string | null;
+  disposition: IncidentDisposition | null;
+  summary: string;
+  detailed_narrative: string | null;
+  evidence_urls: string[];
+  status: ReportStatus;
+  reviewed_by: string | null;
+  reviewer_notes: string | null;
+  reviewed_at: Date | null;
+  submitted_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+
+  incident_status: IncidentStatus;
+  incident_threat_category: ThreatCategory;
+  incident_threat_level: ThreatLevel;
+  incident_verified_at: Date | null;
+  incident_verified_by_id: string | null;
+  incident_trigger_source: TriggerSource;
+  incident_claimed_by_id: string | null;
+  incident_claimed_by_name: string | null;
+}
+
+/**
+ * Adds the derived booleans.
+ *
+ * NOTE: every comparison below uses the enum MEMBER (e.g. ReportStatus.DRAFT)
+ * rather than the string literal. TS enums are nominal types, so
+ * `row.status === 'draft'` fails lint (@typescript-eslint/no-unsafe-enum-
+ * comparison) even though the runtime value is identical. The members are
+ * already imported at the top of this file — don't "simplify" them back to
+ * string literals.
+ */
+function toIncidentReport(row: IncidentReportRow): IncidentReportEntity {
+  return {
+    ...row,
+    is_report_draft: row.status === ReportStatus.DRAFT,
+    is_report_pending_review:
+      row.status === ReportStatus.SUBMITTED ||
+      row.status === ReportStatus.UNDER_REVIEW,
+    is_report_approved: row.status === ReportStatus.APPROVED,
+    is_report_rejected: row.status === ReportStatus.NEEDS_REVISION,
+    is_report_final: row.status === ReportStatus.APPROVED,
+    is_incident_verified: row.incident_verified_at !== null,
+    is_incident_resolved: row.incident_status === IncidentStatus.RESOLVED,
+    is_incident_cancelled: row.incident_status === IncidentStatus.CANCELLED,
+    is_incident_pending_verification:
+      row.incident_status === IncidentStatus.AWAITING_VERIFICATION,
+    // Mirrors chck_incident_resolution_safety_gate: fail-case only.
+    needs_incident_verification:
+      row.incident_status === IncidentStatus.AWAITING_VERIFICATION &&
+      row.incident_verified_at === null &&
+      (row.incident_threat_category === ThreatCategory.HAZARD ||
+        (row.incident_threat_category === ThreatCategory.DE_ESCALATABLE &&
+          row.incident_threat_level === ThreatLevel.ACTIVE_THREAT)),
+  };
+}
+
 export class IncidentReportRepository {
   constructor(private readonly db: DatabaseService) {}
 
@@ -72,7 +141,7 @@ export class IncidentReportRepository {
   }
 
   // ==================================================================
-  // EXISTING CRUD
+  // CRUD
   // ==================================================================
 
   async createReport(data: CreateReportData): Promise<string | null> {
@@ -241,43 +310,89 @@ export class IncidentReportRepository {
     }
     if (sets.length === 0) return null;
 
-    const rows = await this.queryRows<IncidentReportEntity>(
-      `UPDATE incident_report
-          SET ${sets.join(', ')}
-        WHERE id = $1::uuid
-          AND assigned_reporter_id = $2::uuid
-          AND status IN ('draft', 'needs_revision')
-        RETURNING *`,
+    const rows = await this.queryRows<IncidentReportRow>(
+      `WITH updated AS (
+         UPDATE incident_report
+            SET ${sets.join(', ')}
+          WHERE id = $1::uuid
+            AND assigned_reporter_id = $2::uuid
+            AND status IN ('draft', 'needs_revision')
+          RETURNING *
+       )
+       SELECT ${INCIDENT_REPORT_SELECT}
+         FROM updated r
+         JOIN incident i ON i.id = r.incident_id
+         LEFT JOIN user_account cu ON cu.id = i.claimed_by_id`,
       params,
     );
-    return rows[0] ?? null;
+    return rows[0] ? toIncidentReport(rows[0]) : null;
   }
 
   async findReportById(reportId: string): Promise<IncidentReportEntity | null> {
-    const rows = await this.queryRows<IncidentReportEntity>(
-      `SELECT * FROM incident_report WHERE id = $1::uuid`,
+    const rows = await this.queryRows<IncidentReportRow>(
+      `SELECT ${INCIDENT_REPORT_SELECT}
+         FROM incident_report r
+         JOIN incident i ON i.id = r.incident_id
+         LEFT JOIN user_account cu ON cu.id = i.claimed_by_id
+        WHERE r.id = $1::uuid`,
       [reportId],
     );
-    return rows[0] ?? null;
+    return rows[0] ? toIncidentReport(rows[0]) : null;
   }
+
+  // ==================================================================
+  // Cursor queue (kept, with new filters)
+  // ==================================================================
 
   async findReportsAwaitingReview(
     commandCenterId: string | null,
-    { limit, cursor }: PageOptions = {},
+    query: {
+      trigger_sources?: TriggerSource[];
+      from_date?: string;
+      to_date?: string;
+      limit?: number;
+      cursor?: string;
+    } = {},
   ): Promise<CursorPage<IncidentReportEntity>> {
-    const size = clampLimit(limit);
-    const params: unknown[] = [commandCenterId];
+    const size = clampLimit(query.limit);
     const sortAt = 'COALESCE(r.submitted_at, r.created_at)';
-    const keyset = keysetPredicate(cursor, params, sortAt, 'r.id', '>');
+
+    const params: unknown[] = [];
+    const conditions: string[] = [`r.status IN ('submitted', 'under_review')`];
+
+    if (commandCenterId) {
+      params.push(commandCenterId);
+      conditions.push(`r.command_center_id = $${params.length}::uuid`);
+    }
+    if (query.trigger_sources?.length) {
+      params.push(query.trigger_sources);
+      conditions.push(
+        `i.trigger_source = ANY($${params.length}::trigger_source_enum[])`,
+      );
+    }
+    if (query.from_date) {
+      params.push(query.from_date);
+      conditions.push(
+        `r.submitted_at >= ($${params.length}::date::timestamp AT TIME ZONE 'Asia/Manila')`,
+      );
+    }
+    if (query.to_date) {
+      params.push(query.to_date);
+      conditions.push(
+        `r.submitted_at < (($${params.length}::date + 1)::timestamp AT TIME ZONE 'Asia/Manila')`,
+      );
+    }
+
+    const whereSql = conditions.join(' AND ');
+    const keyset = keysetPredicate(query.cursor, params, sortAt, 'r.id', '>');
     params.push(size + 1);
 
-    const rows = await this.queryRows<
-      IncidentReportEntity & { cursor_t: string }
-    >(
-      `SELECT r.*, ${cursorTsSql(sortAt)} AS ${CURSOR_COLUMN}
+    const rows = await this.queryRows<IncidentReportRow & { cursor_t: string }>(
+      `SELECT ${INCIDENT_REPORT_SELECT}, ${cursorTsSql(sortAt)} AS ${CURSOR_COLUMN}
          FROM incident_report r
-        WHERE r.status IN ('submitted', 'under_review')
-          AND ($1::uuid IS NULL OR r.command_center_id = $1::uuid)
+         JOIN incident i ON i.id = r.incident_id
+         LEFT JOIN user_account cu ON cu.id = i.claimed_by_id
+        WHERE ${whereSql}
           ${keyset}
         ORDER BY ${sortAt} ASC, r.id ASC
         LIMIT $${params.length}`,
@@ -286,19 +401,29 @@ export class IncidentReportRepository {
 
     const page = toPage(rows, size, (r) => ({ t: r.cursor_t, id: r.id }));
     return {
-      items: page.items.map((r) => stripCursorColumn(r)),
+      items: page.items.map((r) =>
+        toIncidentReport(stripCursorColumn(r) as unknown as IncidentReportRow),
+      ),
       nextCursor: page.nextCursor,
     };
   }
 
   // ==================================================================
-  // NEW: summary + offset-paginated list
+  // Summary + offset list
   // ==================================================================
 
   async getReportSummary(
     scope: ReportScope,
+    filters: {
+      status?: ReportStatus;
+      statuses?: ReportStatus[];
+      incident_statuses?: IncidentStatus[];
+      trigger_sources?: TriggerSource[];
+      from_date?: string;
+      to_date?: string;
+    } = {},
   ): Promise<IncidentReportSummaryResponseDto> {
-    const { sql: whereSql, params } = this.buildScopeWhere(scope);
+    const { sql: whereSql, params } = this.buildReportFilters(scope, filters);
 
     const rows = await this.queryRows<ReportSummaryRow>(
       `SELECT
@@ -309,6 +434,7 @@ export class IncidentReportRepository {
          COUNT(*) FILTER (WHERE r.status = 'needs_revision')::int AS needs_revision,
          COUNT(*) FILTER (WHERE r.status = 'approved')::int       AS approved
        FROM incident_report r
+       JOIN incident i ON i.id = r.incident_id
        WHERE ${whereSql}`,
       params,
     );
@@ -321,7 +447,6 @@ export class IncidentReportRepository {
       needs_revision: 0,
       approved: 0,
     };
-
     const pendingReview = row.submitted + row.under_review;
 
     return {
@@ -342,64 +467,65 @@ export class IncidentReportRepository {
     scope: ReportScope,
     filters: {
       status?: ReportStatus;
+      statuses?: ReportStatus[];
+      incident_statuses?: IncidentStatus[];
+      trigger_sources?: TriggerSource[];
+      from_date?: string;
+      to_date?: string;
       sortBy: ReportSortBy;
       sortOrder: SortOrder;
       limit: number;
       offset: number;
     },
   ): Promise<{ items: IncidentReportEntity[]; total: number }> {
-    const { sql: scopeSql, params: scopeParams } = this.buildScopeWhere(scope);
-    const params: unknown[] = [...scopeParams];
-    const conditions: string[] = [scopeSql];
-
-    if (filters.status) {
-      params.push(filters.status);
-      conditions.push(`r.status = $${params.length}::report_status`);
-    }
-
-    const whereSql = conditions.join(' AND ');
+    const { sql: whereSql, params } = this.buildReportFilters(scope, filters);
     const orderBy = this.buildOrderBy(filters.sortBy, filters.sortOrder);
 
-    // Total — same WHERE, no pagination
     const totalRows = await this.queryRows<{ total: number }>(
-      `SELECT COUNT(*)::int AS total FROM incident_report r WHERE ${whereSql}`,
+      `SELECT COUNT(*)::int AS total
+         FROM incident_report r
+         JOIN incident i ON i.id = r.incident_id
+        WHERE ${whereSql}`,
       params,
     );
     const total = totalRows[0]?.total ?? 0;
 
     if (total === 0) return { items: [], total: 0 };
-
-    // Page — same WHERE, plus LIMIT/OFFSET. Short-circuit if offset is past end.
     if (filters.offset >= total) return { items: [], total };
 
     const pageParams = [...params, filters.limit, filters.offset];
     const limitParam = params.length + 1;
     const offsetParam = params.length + 2;
 
-    const items = await this.queryRows<IncidentReportEntity>(
-      `SELECT r.*
+    const items = await this.queryRows<IncidentReportRow>(
+      `SELECT ${INCIDENT_REPORT_SELECT}
          FROM incident_report r
+         JOIN incident i ON i.id = r.incident_id
+         LEFT JOIN user_account cu ON cu.id = i.claimed_by_id
         WHERE ${whereSql}
         ORDER BY ${orderBy}
         LIMIT $${limitParam} OFFSET $${offsetParam}`,
       pageParams,
     );
 
-    return { items, total };
+    return { items: items.map(toIncidentReport), total };
   }
 
   // ==================================================================
-  // helpers
+  // Helpers
   // ==================================================================
 
-  /**
-   * Turns a role-enforced ReportScope into a WHERE fragment.
-   * Returns `'TRUE'` when nothing is set, so callers can always join it.
-   */
-  private buildScopeWhere(scope: ReportScope): {
-    sql: string;
-    params: unknown[];
-  } {
+  private buildReportFilters(
+    scope: ReportScope,
+    filters: {
+      status?: ReportStatus;
+      statuses?: ReportStatus[];
+      incident_statuses?: IncidentStatus[];
+      trigger_sources?: TriggerSource[];
+      from_date?: string;
+      to_date?: string;
+    },
+  ): { sql: string; params: unknown[] } {
     const conditions: string[] = [];
     const params: unknown[] = [];
 
@@ -412,19 +538,46 @@ export class IncidentReportRepository {
       conditions.push(`r.assigned_reporter_id = $${params.length}::uuid`);
     }
 
+    const reportStatuses =
+      filters.statuses ?? (filters.status ? [filters.status] : undefined);
+    if (reportStatuses && reportStatuses.length > 0) {
+      params.push(reportStatuses);
+      conditions.push(`r.status = ANY($${params.length}::report_status[])`);
+    }
+
+    if (filters.incident_statuses?.length) {
+      params.push(filters.incident_statuses);
+      conditions.push(
+        `i.status = ANY($${params.length}::incident_status_enum[])`,
+      );
+    }
+
+    if (filters.trigger_sources?.length) {
+      params.push(filters.trigger_sources);
+      conditions.push(
+        `i.trigger_source = ANY($${params.length}::trigger_source_enum[])`,
+      );
+    }
+
+    if (filters.from_date) {
+      params.push(filters.from_date);
+      conditions.push(
+        `r.submitted_at >= ($${params.length}::date::timestamp AT TIME ZONE 'Asia/Manila')`,
+      );
+    }
+    if (filters.to_date) {
+      params.push(filters.to_date);
+      conditions.push(
+        `r.submitted_at < (($${params.length}::date + 1)::timestamp AT TIME ZONE 'Asia/Manila')`,
+      );
+    }
+
     return {
       sql: conditions.length > 0 ? conditions.join(' AND ') : 'TRUE',
       params,
     };
   }
 
-  /**
-   * ORDER BY fragment. `sortBy` / `sortOrder` are pre-validated by the DTO,
-   * so interpolating them is safe (no user-controlled fragments reach this).
-   *
-   * Status sort uses the natural workflow order so "sort by status" reads
-   * left-to-right as the report moves through its lifecycle.
-   */
   private buildOrderBy(sortBy: ReportSortBy, sortOrder: SortOrder): string {
     const dir = sortOrder === 'asc' ? 'ASC' : 'DESC';
     switch (sortBy) {

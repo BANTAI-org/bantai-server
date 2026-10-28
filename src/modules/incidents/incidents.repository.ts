@@ -6,6 +6,10 @@ import {
   DriverBrief,
   DriverBriefVisibility,
 } from './interfaces/driver-brief.interface';
+import type {
+  IncidentTimelineEvent,
+  IncidentTimelineKind,
+} from './interfaces/timeline-event.interface';
 import { PeerResponseStatus } from './enums/peer-response-status.enum';
 import { ArrivalConfirmationMethod } from './enums/arrival-confirmation-method.enum';
 import { IncidentStatus } from './enums/incident-status.enum';
@@ -605,6 +609,156 @@ export class IncidentRepository {
     };
   }
 
+  /**
+   * Full lifecycle timeline of an incident, from creation to closure.
+   * Union of every state change the DB already captures as a timestamp
+   * or a child row. Ordered ascending by event time.
+   *
+   * Caller is responsible for authorization (IncidentService does this).
+   */
+  async getIncidentTimeline(
+    incidentId: string,
+  ): Promise<IncidentTimelineEvent[]> {
+    const rows = await queryRows<{
+      at: Date;
+      kind: IncidentTimelineKind;
+      actor_id: string | null;
+      actor_name: string | null;
+      details: Record<string, unknown>;
+    }>(
+      this.db,
+      `WITH events AS (
+         SELECT i.created_at AS at, 'incident_created'::text AS kind,
+                NULL::uuid AS actor_id, NULL::text AS actor_name,
+                jsonb_build_object('trigger_source', i.trigger_source) AS details
+           FROM incident i WHERE i.id = $1::uuid
+
+         UNION ALL
+
+         SELECT w.issued_at, 'wave_issued',
+                NULL::uuid, NULL::text,
+                jsonb_build_object('wave_number', w.wave_number,
+                                   'radius_meters', w.radius_meters)
+           FROM incident_dispatch_wave w WHERE w.incident_id = $1::uuid
+
+         UNION ALL
+
+         SELECT a.offered_at, 'responder_offered', a.responder_id,
+                u.f_name || ' ' || u.l_name,
+                jsonb_build_object('responder_id', a.responder_id,
+                                   'distance_meters', a.distance_meters)
+           FROM incident_responder_assignment a
+           LEFT JOIN user_account u ON u.id = a.responder_id
+          WHERE a.incident_id = $1::uuid
+
+         UNION ALL
+
+         SELECT i.claimed_at, 'responder_claimed', i.claimed_by_id,
+                u.f_name || ' ' || u.l_name, '{}'::jsonb
+           FROM incident i
+           LEFT JOIN user_account u ON u.id = i.claimed_by_id
+          WHERE i.id = $1::uuid AND i.claimed_at IS NOT NULL
+
+         UNION ALL
+
+         SELECT a.en_route_at, 'responder_en_route', a.responder_id,
+                u.f_name || ' ' || u.l_name, '{}'::jsonb
+           FROM incident_responder_assignment a
+           LEFT JOIN user_account u ON u.id = a.responder_id
+          WHERE a.incident_id = $1::uuid AND a.en_route_at IS NOT NULL
+
+         UNION ALL
+
+         SELECT i.on_scene_at, 'responder_arrived', i.claimed_by_id,
+                u.f_name || ' ' || u.l_name,
+                jsonb_build_object('method', a.arrival_confirmation_method)
+           FROM incident i
+           LEFT JOIN user_account u ON u.id = i.claimed_by_id
+           LEFT JOIN incident_responder_assignment a
+                  ON a.incident_id = i.id AND a.responder_id = i.claimed_by_id
+          WHERE i.id = $1::uuid AND i.on_scene_at IS NOT NULL
+
+         UNION ALL
+
+         SELECT e.escalated_at, 'incident_escalated', e.escalated_by_id,
+                u.f_name || ' ' || u.l_name,
+                jsonb_build_object('command_center_id', e.command_center_id,
+                                   'reason', e.reason, 'notes', e.notes)
+           FROM incident_escalation e
+           LEFT JOIN user_account u ON u.id = e.escalated_by_id
+          WHERE e.incident_id = $1::uuid
+
+         UNION ALL
+
+         SELECT i.verified_at, 'verification_completed', i.verified_by_id,
+                u.f_name || ' ' || u.l_name,
+                jsonb_build_object('notes', i.verification_notes)
+           FROM incident i
+           LEFT JOIN user_account u ON u.id = i.verified_by_id
+          WHERE i.id = $1::uuid AND i.verified_at IS NOT NULL
+
+         UNION ALL
+
+         SELECT i.resolved_at, 'incident_resolved', i.resolved_by_id,
+                u.f_name || ' ' || u.l_name,
+                jsonb_build_object('outcome', i.outcome)
+           FROM incident i
+           LEFT JOIN user_account u ON u.id = i.resolved_by_id
+          WHERE i.id = $1::uuid AND i.resolved_at IS NOT NULL
+
+         UNION ALL
+
+         SELECT i.cancelled_at, 'incident_cancelled',
+                NULL::uuid, NULL::text, '{}'::jsonb
+           FROM incident i
+          WHERE i.id = $1::uuid AND i.cancelled_at IS NOT NULL
+
+         UNION ALL
+
+         SELECT r.created_at, 'report_created', r.assigned_reporter_id,
+                u.f_name || ' ' || u.l_name,
+                jsonb_build_object('report_id', r.id, 'status', r.status)
+           FROM incident_report r
+           LEFT JOIN user_account u ON u.id = r.assigned_reporter_id
+          WHERE r.incident_id = $1::uuid
+
+         UNION ALL
+
+         SELECT r.submitted_at, 'report_submitted', r.submitted_by_id,
+                u.f_name || ' ' || u.l_name,
+                jsonb_build_object('report_id', r.id)
+           FROM incident_report r
+           LEFT JOIN user_account u ON u.id = r.submitted_by_id
+          WHERE r.incident_id = $1::uuid AND r.submitted_at IS NOT NULL
+
+         UNION ALL
+
+         SELECT r.reviewed_at,
+                CASE WHEN r.status = 'approved'
+                     THEN 'report_approved'::text
+                     ELSE 'report_rejected'::text END,
+                r.reviewed_by, u.f_name || ' ' || u.l_name,
+                jsonb_build_object('report_id', r.id,
+                                   'notes', r.reviewer_notes)
+           FROM incident_report r
+           LEFT JOIN user_account u ON u.id = r.reviewed_by
+          WHERE r.incident_id = $1::uuid AND r.reviewed_at IS NOT NULL
+       )
+       SELECT at, kind, actor_id, actor_name, details
+         FROM events
+        ORDER BY at ASC NULLS LAST`,
+      [incidentId],
+    );
+
+    return rows.map((r) => ({
+      at: r.at.toISOString(),
+      kind: r.kind,
+      actor_id: r.actor_id,
+      actor_name: r.actor_name,
+      details: r.details,
+    }));
+  }
+
   async canUserViewIncident(
     incidentId: string,
     userId: string,
@@ -894,19 +1048,9 @@ export class IncidentRepository {
   }
 
   // ==================================================================
-  // NEW: FCM recipient lists + center-assigned dispatch
+  // FCM recipient lists + center-assigned dispatch
   // ==================================================================
 
-  /**
-   * Responders who currently hold an active claim on this incident.
-   *
-   * The RESOLVED branch of the incident_after_change trigger inserts a
-   * notification row for exactly this set:
-   *   WHERE status IN ('CLAIMED','EN_ROUTE','ARRIVED')
-   * IncidentService.resolveIncident uses this query to derive the FCM
-   * recipient list, so the push reaches the same responders who got the
-   * inbox row. Keep the status list in lockstep with the trigger.
-   */
   async getActiveResponderIdsOnIncident(incidentId: string): Promise<string[]> {
     const rows = await queryRows<{ responder_id: string }>(
       this.db,
@@ -919,22 +1063,6 @@ export class IncidentRepository {
     return rows.map((r) => r.responder_id);
   }
 
-  /**
-   * Direct dispatch from a command center, bypassing the wave engine.
-   *
-   * The DB trigger handle_center_assignment fires on this INSERT and:
-   *   * writes a system_audit_log row (action = ASSIGN_RESPONDER)
-   *   * inserts the inbox notification for the responder
-   *     (type = dispatch_assigned)
-   * So the inbox half is already handled — the service only has to
-   * emit the FCM push (with skipInbox: true) after this returns.
-   *
-   * Inserted with status = OFFERED, so the responder claims via the
-   * existing POST /incidents/:id/claim path and the state machine takes
-   * over from there. Throws 23505 (uq_assignment_per_responder) if the
-   * responder already has any assignment row on this incident, and 23503
-   * if the responder_id doesn't exist.
-   */
   async createCenterAssignment(
     incidentId: string,
     responderId: string,

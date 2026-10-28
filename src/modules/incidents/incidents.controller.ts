@@ -36,6 +36,7 @@ import { AssignResponderDto } from './dto/assign-responder.dto';
 import { IncidentService } from './incidents.service';
 import { IncidentEntity } from './interfaces/incident-entity.interface';
 import { IncidentLogEntity } from './interfaces/incident-log-entity.interface';
+import type { IncidentTimelineResponse } from './interfaces/timeline-event.interface';
 import { IncidentStatus } from './enums/incident-status.enum';
 import { TriggerSource } from './enums/trigger-source.enum';
 import { EdgeApiKeyGuard } from '../../common/guards/edge-api-key-guard';
@@ -61,11 +62,10 @@ export class IncidentController {
 
   // =====================================================================
   // EDGE AI / KVM WEBHOOK
-  // MUST BE PLACED BEFORE @Get(':incidentId') so Nest matches it correctly
   // =====================================================================
   @Post('edge')
-  @Public() // Bypasses the class-level JwtGuard
-  @UseGuards(EdgeApiKeyGuard) // Protects with the API Key
+  @Public()
+  @UseGuards(EdgeApiKeyGuard)
   @ApiOperation({
     summary: 'Create an incident from an Edge AI KVM',
     description:
@@ -267,6 +267,25 @@ export class IncidentController {
       userId,
       role,
     );
+  }
+
+  @Get(':incidentId/timeline')
+  @ApiOperation({ summary: 'Get the full lifecycle timeline of an incident' })
+  @ApiParam({ name: 'incidentId', description: 'Incident UUID' })
+  @ApiResponse({ status: 200, description: 'Timeline returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden — you cannot view this incident',
+  })
+  @Roles(...ANY_USER)
+  @ApiRoles(...ANY_USER)
+  getTimeline(
+    @Param() params: IncidentIdParamDto,
+    @CurrentUser('sub') userId: string,
+    @CurrentUser('role') role: Role,
+  ): Promise<IncidentTimelineResponse> {
+    return this.incidentService.getTimeline(params.incidentId, userId, role);
   }
 
   @Post(':incidentId/claim')
@@ -502,15 +521,6 @@ export class IncidentController {
     return { id };
   }
 
-  /**
-   * Center-assigned dispatch on an already ESCALATED incident.
-   * Bypasses the wave engine; the responder receives a normal inbox row
-   * and FCM push, then claims via POST /incidents/:incidentId/claim.
-   *
-   * Admin / super only, since assigning an individual responder is a
-   * command-center decision that a claimant shouldn't be able to make
-   * on their own behalf.
-   */
   @Post(':incidentId/assign')
   @ApiOperation({
     summary: 'Assign a specific responder to an escalated incident',

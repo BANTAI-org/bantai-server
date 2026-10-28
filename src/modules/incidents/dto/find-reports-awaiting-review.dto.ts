@@ -1,20 +1,55 @@
-import { IsOptional, IsString } from 'class-validator';
+import {
+  IsArray,
+  IsEnum,
+  IsOptional,
+  IsString,
+  Matches,
+} from 'class-validator';
+import { Transform } from 'class-transformer';
 import { PageQueryDto } from '../../../common/dto/page-query.dto';
 import { ApiProperty } from '@nestjs/swagger';
+import { TriggerSource } from '../enums/trigger-source.enum';
+
+const parseCsvArray = ({ value }: { value: unknown }): unknown => {
+  if (value === undefined || value === null) return value;
+  const parts: unknown[] | null = Array.isArray(value)
+    ? (value as unknown[])
+    : typeof value === 'string'
+      ? value.split(',')
+      : null;
+  if (parts === null) return value;
+  return parts
+    .map((part) => (typeof part === 'string' ? part.trim() : part))
+    .filter((part) => part !== '');
+};
+
 /**
- * Query for findReportsAwaitingReview. command_center_id is honoured for a
- * super only (omit it for all centers). For an admin the service must IGNORE
- * this value and use the admin's own command center, otherwise an admin could
- * read another center's queue.
+ * Cursor queue for the review dashboard. Kept alongside the offset list
+ * because they serve different UIs: this one is "review the next one, then
+ * the next", the offset one is "browse page 2 of 12".
  */
 export class FindReportsAwaitingReviewQueryDto extends PageQueryDto {
-  @ApiProperty({
-    required: false,
-    description:
-      'Command center UUID used by super administrators to filter results',
-    example: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
-  })
+  @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
   command_center_id?: string;
+
+  @ApiProperty({ required: false, isArray: true, enum: TriggerSource })
+  @IsOptional()
+  @Transform(parseCsvArray)
+  @IsArray()
+  @IsEnum(TriggerSource, { each: true })
+  trigger_sources?: TriggerSource[];
+
+  @ApiProperty({ required: false, description: 'YYYY-MM-DD, Asia/Manila' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  from_date?: string;
+
+  @ApiProperty({ required: false, description: 'YYYY-MM-DD, Asia/Manila' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  to_date?: string;
 }

@@ -1,64 +1,93 @@
-import { IsOptional, IsUUID } from 'class-validator';
+import {
+  IsArray,
+  IsEnum,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Matches,
+} from 'class-validator';
+import { Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
+import { ReportStatus } from '../enums/report-status.enum';
+import { IncidentStatus } from '../enums/incident-status.enum';
+import { TriggerSource } from '../enums/trigger-source.enum';
+
+const parseCsvArray = ({ value }: { value: unknown }): unknown => {
+  if (value === undefined || value === null) return value;
+  const parts: unknown[] | null = Array.isArray(value)
+    ? (value as unknown[])
+    : typeof value === 'string'
+      ? value.split(',')
+      : null;
+  if (parts === null) return value;
+  return parts
+    .map((part) => (typeof part === 'string' ? part.trim() : part))
+    .filter((part) => part !== '');
+};
 
 export class IncidentReportSummaryQueryDto {
-  @ApiProperty({
-    required: false,
-    description:
-      'Command center UUID. Only honored for super; admin is scoped to own; responder is scoped to self.',
-  })
+  @ApiProperty({ required: false })
   @IsOptional()
   @IsUUID()
   command_center_id?: string;
 
-  @ApiProperty({
-    required: false,
-    description:
-      'Reporter UUID. Honored for admins (own CC only) and supers. Ignored for responders.',
-  })
+  @ApiProperty({ required: false })
   @IsOptional()
   @IsUUID()
   assigned_reporter_id?: string;
+
+  @ApiProperty({ required: false, enum: ReportStatus })
+  @IsOptional()
+  @IsEnum(ReportStatus)
+  status?: ReportStatus;
+
+  @ApiProperty({ required: false, isArray: true, enum: ReportStatus })
+  @IsOptional()
+  @Transform(parseCsvArray)
+  @IsArray()
+  @IsEnum(ReportStatus, { each: true })
+  statuses?: ReportStatus[];
+
+  @ApiProperty({ required: false, isArray: true, enum: IncidentStatus })
+  @IsOptional()
+  @Transform(parseCsvArray)
+  @IsArray()
+  @IsEnum(IncidentStatus, { each: true })
+  incident_statuses?: IncidentStatus[];
+
+  @ApiProperty({ required: false, isArray: true, enum: TriggerSource })
+  @IsOptional()
+  @Transform(parseCsvArray)
+  @IsArray()
+  @IsEnum(TriggerSource, { each: true })
+  trigger_sources?: TriggerSource[];
+
+  @ApiProperty({ required: false, description: 'YYYY-MM-DD, Asia/Manila' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  from_date?: string;
+
+  @ApiProperty({ required: false, description: 'YYYY-MM-DD, Asia/Manila' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  to_date?: string;
 }
 
 export class IncidentReportSummaryResponseDto {
-  @ApiProperty({ description: 'Total reports in the caller’s scope' })
-  total!: number;
-
-  // Per-status counts
-  @ApiProperty({ description: 'Draft — not yet submitted' })
-  draft!: number;
-  @ApiProperty({ description: 'Submitted — awaiting a reviewer' })
-  submitted!: number;
-  @ApiProperty({ description: 'Under review — reviewer already picked it up' })
-  under_review!: number;
-  @ApiProperty({
-    description: 'Needs revision — reporter must fix and resubmit',
-  })
-  needs_revision!: number;
-  @ApiProperty({ description: 'Approved — final' })
-  approved!: number;
-
-  // Aggregated views
-  @ApiProperty({
-    description:
-      'Reports actively awaiting a reviewer = submitted + under_review',
-  })
+  @ApiProperty() total!: number;
+  @ApiProperty() draft!: number;
+  @ApiProperty() submitted!: number;
+  @ApiProperty() under_review!: number;
+  @ApiProperty() needs_revision!: number;
+  @ApiProperty() approved!: number;
+  @ApiProperty({ description: 'submitted + under_review' })
   pending_review!: number;
-
-  @ApiProperty({
-    description:
-      'Reports not yet verified = submitted + under_review (same set as pending_review, aliased for the “yet to be verified” UI copy)',
-  })
+  @ApiProperty({ description: 'Alias of pending_review' })
   awaiting_verification!: number;
-
-  @ApiProperty({
-    description: 'Reports where the reporter must act = needs_revision',
-  })
+  @ApiProperty({ description: 'Alias of needs_revision' })
   request_revision!: number;
-
-  @ApiProperty({
-    description: 'Reports not yet submitted = draft',
-  })
+  @ApiProperty({ description: 'Alias of draft' })
   awaiting_submission!: number;
 }
