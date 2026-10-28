@@ -206,7 +206,7 @@ async function generate(): Promise<void> {
   // Driver Mobile App (Only endpoints for Drivers + Public)
   await generateSwaggerDoc(
     app,
-    'driver-app-swagger.json',
+    'driver-app-2-swagger.json',
     'Bantai Driver Mobile API',
     [DriverModule, StorageModule, RedisModule],
     ['DRIVER', 'public'],
