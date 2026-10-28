@@ -71,4 +71,5 @@ export interface IncidentEntity {
 
   created_at: Date;
   updated_at: Date;
+  report_id?: string | null;
 }
