@@ -47,10 +47,10 @@ const trimToNull = ({ value }: { value: unknown }): unknown =>
  *     emergency_contacts): may be omitted, but never sent as null.
  *     They use @ValidateIf(!== undefined) so null is validated and
  *     rejected, unlike @IsOptional, which would let it through.
- *   - Nullable columns (m_name, service_id, fleet_operator_id): may be
+ *   - Nullable columns (m_name, service_id, fleet_operator_id, avatar_url): may be
  *     omitted or explicitly null; a blank string is treated as null.
  *
- * Not patchable here on purpose: email, avatar_url, role, password,
+ * Not patchable here on purpose: email, role, password,
  * auth_provider, provider_id, phone_verified_at, account_status,
  * data_sharing_consented_at. Run this behind a ValidationPipe with
  * { whitelist: true, forbidNonWhitelisted: true, transform: true } so
@@ -112,6 +112,18 @@ export class PatchDriverProfileDto {
     message: 'm_number must be in the format +639XXXXXXXXX',
   })
   m_number?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'The R2 object key returned from the profile image upload endpoint',
+    example: 'users/123/avatar.jpg',
+  })
+  @Transform(trimToNull)
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  avatar_url?: string | null;
 
   /**
    * Required whenever m_number is sent: a changed number must be
@@ -187,8 +199,6 @@ export class PatchDriverProfileDto {
   @MaxLength(255)
   address?: string;
 
-  // 'YYYY-MM-DD', strict calendar check. That it is a PAST date is
-  // checked in DriverService.
   @ApiProperty({
     required: false,
     description: 'Updated date of birth in YYYY-MM-DD format',
@@ -199,7 +209,6 @@ export class PatchDriverProfileDto {
   @IsISO8601({ strict: true })
   date_of_birth?: string;
 
-  // 1 to 3, same as registration. Replaces the whole list.
   @ApiProperty({
     required: false,
     type: () => [EmergencyContactDto],
@@ -303,8 +312,8 @@ export class PatchDriverProfileDto {
 export function toUserAccountPatch(
   dto: PatchDriverProfileDto,
 ): UserAccountPatch {
-  const { f_name, l_name, m_name, m_number } = dto;
-  return { f_name, l_name, m_name, m_number };
+  const { f_name, l_name, m_name, m_number, avatar_url } = dto;
+  return { f_name, l_name, m_name, m_number, avatar_url };
 }
 
 /** Picks the d_profile fields out of the DTO. */

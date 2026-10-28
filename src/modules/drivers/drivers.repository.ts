@@ -15,19 +15,13 @@ import {
 } from './types/password-reset-types';
 import { DutyStatusEnum } from './enums/duty-status.enum';
 
-/**
- * The ONLY column names a patch can ever put into a SQL string. The
- * patch objects are read by looking up each name below, never by
- * iterating the patch's own keys, so a stray key can't become part of
- * a query. Typed against the patch types, so a typo here is a
- * compile error.
- */
 const USER_PATCHABLE_COLUMNS: readonly (keyof UserAccountPatch)[] = [
   'f_name',
   'l_name',
   'm_name',
   'm_number',
   'phone_verified_at',
+  'avatar_url', // <-- ADDED
 ];
 
 const PROFILE_PATCHABLE_COLUMNS: readonly (keyof DriverProfilePatch)[] = [
@@ -47,22 +41,12 @@ const PROFILE_PATCHABLE_COLUMNS: readonly (keyof DriverProfilePatch)[] = [
   'medical_conditions',
 ];
 
-/**
- * The only SQL fragments the forgot-password lookup can use. The identity
- * kind picks one of these; the user-supplied value only ever travels as
- * the $1 parameter, never inside the SQL text.
- */
 const PASSWORD_RESET_LOOKUP: Record<ResetIdentityKind, string> = {
   id: 'id = $1',
   email: 'lower(email) = $1',
   m_number: 'm_number = $1',
 };
 
-/**
- * The driver's profile: user_account + d_profile, matching DriverProfileDataRow.
- * Dates are formatted in SQL to prevent timezone shifts during serialization.
- * Migration 006: u.auth_provider and u.provider_id are removed from user_account.
- */
 const PROFILE_SELECT_SQL = `
   SELECT
     u.id, u.f_name, u.m_name, u.l_name, u.email, u.m_number, u.avatar_url,
@@ -85,9 +69,6 @@ const PROFILE_SELECT_SQL = `
 export class DriverRepository {
   constructor(private readonly db: DatabaseService) {}
 
-  /**
-   * Creates user_account, optional user_identity, and d_profile inside ONE transaction.
-   */
   async createDriverAccount(
     userData: CreateDriverUserAccount,
     profileData: CreateDriverProfileData,
@@ -124,7 +105,6 @@ export class DriverRepository {
     } = profileData;
 
     return this.db.withTransaction(async (client) => {
-      // 1. Insert core user_account (decoupled from auth provider metadata)
       const { rows } = await client.query<UserIdType>(
         `INSERT INTO user_account (
            f_name, l_name, m_name, email, m_number, role,
@@ -146,7 +126,6 @@ export class DriverRepository {
       );
       const { id: user_id } = rows[0];
 
-      // 2. Insert into user_identity if social identity is supplied
       if (auth_provider && provider_id) {
         await client.query(
           `INSERT INTO user_identity (user_id, provider, provider_id, provider_email)
@@ -155,7 +134,6 @@ export class DriverRepository {
         );
       }
 
-      // 3. Insert driver profile metadata
       await client.query(
         `INSERT INTO d_profile (
            user_id, service_provider, service_id, plate_number, blood_type,
@@ -188,9 +166,6 @@ export class DriverRepository {
     });
   }
 
-  /**
-   * Fetches full driver profile or null if account is inactive or deleted.
-   */
   async findProfileById(
     userId: string,
     client?: Queryable,
@@ -203,9 +178,6 @@ export class DriverRepository {
     return rows[0] ?? null;
   }
 
-  /**
-   * Updates user_account table based on defined patch columns.
-   */
   async updateUserAccount(
     userId: string,
     patch: UserAccountPatch,
@@ -241,9 +213,6 @@ export class DriverRepository {
     return rows.length > 0;
   }
 
-  /**
-   * Updates d_profile table based on defined patch columns.
-   */
   async updateDriverProfile(
     userId: string,
     patch: DriverProfilePatch,
@@ -273,9 +242,6 @@ export class DriverRepository {
     return rows.length > 0;
   }
 
-  /**
-   * Applies both patches in ONE transaction and returns updated record.
-   */
   async patchDriverComposite(
     userId: string,
     accountPatch: UserAccountPatch,
@@ -319,15 +285,6 @@ export class DriverRepository {
     return { sets, paramIndex };
   }
 
-  // ---------------------------------------------------------------
-  // Forgot-password
-  // ---------------------------------------------------------------
-
-  /**
-   * The live driver behind an id, email or phone number, but only if they
-   * have a password to reset. Soft-deleted accounts and social-only
-   * (Google/Apple) accounts return null.
-   */
   async findDriverForPasswordReset(
     identity: ResetIdentity,
   ): Promise<DriverPasswordTarget | null> {
@@ -344,12 +301,6 @@ export class DriverRepository {
     return rows[0] ?? null;
   }
 
-  /**
-   * Sets the new password hash and signs the driver out everywhere (revokes
-   * every live refresh session), in ONE transaction. Unlike updatePassword,
-   * this is the account-recovery path. Returns false if no live driver
-   * matched, in which case nothing changed.
-   */
   async resetPasswordAndRevokeSessions(
     id: string,
     passwordHash: string,
