@@ -5,6 +5,7 @@ import { IncidentStatus } from './enums/incident-status.enum';
 import { ThreatCategory } from './enums/threat-category.enum';
 import { ThreatLevel } from './enums/threat-level.enum';
 import { TriggerSource } from './enums/trigger-source.enum';
+import { Injectable } from '@nestjs/common';
 import { IncidentReportEntity } from './interfaces/incident-report-entity.interface';
 import {
   CreateReportData,
@@ -133,6 +134,7 @@ function toIncidentReport(row: IncidentReportRow): IncidentReportEntity {
   };
 }
 
+@Injectable()
 export class IncidentReportRepository {
   constructor(private readonly db: DatabaseService) {}
 
