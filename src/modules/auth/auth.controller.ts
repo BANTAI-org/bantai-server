@@ -30,6 +30,7 @@ import { ActionTokenPasswordDto } from './dto/action-token-password.dto';
 import { ReplyWithCookie } from './interfaces/reply-w-cookie.interface';
 import { AuthTokens } from './interfaces/auth-token.interface';
 import { GoogleSsoDto } from './dto/google-sso.dto';
+import { RefreshDTO } from './dto/refresh-token.dto';
 
 interface RequestWithCookies extends FastifyRequest {
   cookies: Record<string, string | undefined>;
@@ -113,9 +114,11 @@ export class AuthController {
   })
   async refresh(
     @Req() request: RequestWithCookies,
+    @Body() dto: RefreshDTO,
     @Res({ passthrough: true }) response: FastifyReply,
   ): Promise<AuthTokens> {
-    const existingToken = request.cookies?.[REFRESH_COOKIE_NAME];
+    const existingToken =
+      request.cookies?.[REFRESH_COOKIE_NAME] ?? dto.refreshToken;
 
     if (!existingToken) {
       throw new UnauthorizedException('No refresh token provided.');
