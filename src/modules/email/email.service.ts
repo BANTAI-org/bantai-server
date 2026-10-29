@@ -2,13 +2,9 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
-  Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-// 🚨 THE FIX: Using 'import type' for the Decorator signature
-import type { Transporter } from 'nodemailer';
 import { BrevoProvider } from './providers/brevo.provider';
-import { NODEMAILER_CLIENT } from './providers/nodemailer.provider';
 
 @Injectable()
 export class EmailService {
@@ -16,15 +12,9 @@ export class EmailService {
 
   constructor(
     private readonly brevoProvider: BrevoProvider,
-    @Inject(NODEMAILER_CLIENT)
-    private readonly mailer: Transporter,
     private readonly configService: ConfigService,
   ) {}
 
-  /**
-   * DEFAULT SEND METHOD (Uses Brevo)
-   * Used for OTPs, alerts, and general emails.
-   */
   async sendEmail(to: string, subject: string, html: string): Promise<void> {
     try {
       await this.brevoProvider.sendEmail(to, subject, html);
@@ -32,36 +22,6 @@ export class EmailService {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(
         `Brevo failed to send "${subject}" to ${to}: ${message}`,
-      );
-      throw new InternalServerErrorException(
-        `Email failed to send: ${message}`,
-      );
-    }
-  }
-
-  /**
-   * BYPASS SEND METHOD (Uses Gmail/Nodemailer)
-   * Used ONLY for magic links so Brevo doesn't wrap/pre-fetch them.
-   */
-  private async sendViaNodemailer(
-    to: string,
-    subject: string,
-    html: string,
-  ): Promise<void> {
-    try {
-      await this.mailer.sendMail({
-        from: this.configService.getOrThrow<string>('EMAIL_FROM'),
-        to,
-        subject,
-        html,
-      });
-      this.logger.log(
-        `Bypassed Brevo; sent "${subject}" via Nodemailer to ${to}`,
-      );
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(
-        `Nodemailer failed to send "${subject}" to ${to}: ${message}`,
       );
       throw new InternalServerErrorException(
         `Email failed to send: ${message}`,
@@ -79,8 +39,9 @@ export class EmailService {
   async sendActivationEmail(to: string, rawToken: string): Promise<void> {
     const activationUrl = this.buildActionUrl('/activate', rawToken);
 
-    // 🚨 Safety net for your demo! Keep this.
+    console.log('====================================================');
     console.log('🚨 RAW ACTIVATION URL:', activationUrl);
+    console.log('====================================================');
 
     const html = `
       <p>Welcome to BANTAI! Your account has been created.</p>
@@ -89,8 +50,7 @@ export class EmailService {
       <p>This link will expire in 24 hours. If you didn't expect this email, you can safely ignore it.</p>
     `;
 
-    // 🚨 USING NODEMAILER HERE 🚨
-    await this.sendViaNodemailer(to, 'Activate your BANTAI account', html);
+    await this.sendEmail(to, 'Activate your BANTAI account', html);
   }
 
   async sendPasswordResetEmail(to: string, rawToken: string): Promise<void> {
@@ -102,8 +62,7 @@ export class EmailService {
       <p>This link will expire in 1 hour. If you didn't request this, you can safely ignore this email — your password won't be changed.</p>
     `;
 
-    // 🚨 USING NODEMAILER HERE 🚨
-    await this.sendViaNodemailer(to, 'Reset your BANTAI password', html);
+    await this.sendEmail(to, 'Reset your BANTAI password', html);
   }
 
   async sendOtpEmail(
@@ -118,7 +77,6 @@ export class EmailService {
     <p>If you didn't request this, you can safely ignore this email.</p>
   `;
 
-    // Still goes through Brevo
     await this.sendEmail(to, 'Your BANTAI verification code', html);
   }
 }
