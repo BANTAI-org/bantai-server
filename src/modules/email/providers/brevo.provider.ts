@@ -24,6 +24,10 @@ export class BrevoProvider {
         accept: 'application/json',
         'api-key': apiKey,
         'content-type': 'application/json',
+        // 🚨 ADD THESE THREE LINES 🚨
+        'X-Mailin-Track': 'false',
+        'X-Mailin-Track-Clicks': 'false',
+        'X-Mailin-Track-Opens': 'false',
       },
       body: JSON.stringify({
         sender: { name: 'BANTAI Command Center', email: senderEmail },
