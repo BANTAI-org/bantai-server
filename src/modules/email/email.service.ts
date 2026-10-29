@@ -2,26 +2,52 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { BrevoProvider } from './providers/brevo.provider';
+import { Resend } from 'resend';
+import { RESEND_CLIENT } from './providers/resend.provider';
 
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
 
   constructor(
-    private readonly brevoProvider: BrevoProvider,
+    @Inject(RESEND_CLIENT)
+    private readonly resend: Resend,
     private readonly configService: ConfigService,
   ) {}
 
+  /**
+   * Core send method using Resend HTTP API.
+   */
   async sendEmail(to: string, subject: string, html: string): Promise<void> {
     try {
-      await this.brevoProvider.sendEmail(to, subject, html);
+      // 🚨 IMPORTANT: If you haven't verified a domain in Resend,
+      // you MUST use 'onboarding@resend.dev' as the from address.
+      // Note: With 'onboarding@resend.dev', you can ONLY send emails to
+      // the email address you used to sign up for Resend.
+      const fromAddress =
+        this.configService.get<string>('EMAIL_FROM') || 'onboarding@resend.dev';
+
+      const { data, error } = await this.resend.emails.send({
+        from: `BANTAI <${fromAddress}>`,
+        to,
+        subject,
+        html,
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      this.logger.log(
+        `Email successfully sent via Resend (ID: ${data?.id}) to ${to}`,
+      );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(
-        `Brevo failed to send "${subject}" to ${to}: ${message}`,
+        `Resend failed to send "${subject}" to ${to}: ${message}`,
       );
       throw new InternalServerErrorException(
         `Email failed to send: ${message}`,
@@ -39,6 +65,7 @@ export class EmailService {
   async sendActivationEmail(to: string, rawToken: string): Promise<void> {
     const activationUrl = this.buildActionUrl('/activate', rawToken);
 
+    // 🚨 Safety net for your demo. You can delete this after the presentation.
     console.log('====================================================');
     console.log('🚨 RAW ACTIVATION URL:', activationUrl);
     console.log('====================================================');
