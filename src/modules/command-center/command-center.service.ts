@@ -26,17 +26,38 @@ import { ResponderTableRow } from './interfaces/responder-tb.interface';
 import { ActorOption } from './interfaces/action-option.interface';
 import { ResponderFilterDTO } from './dto/responder-filter.dto';
 import { AuthService } from '../auth/auth.service';
+import { ReassignBranchDTO } from './dto/reassign-branch.dto';
 
 // Matches the "expires in 1 hour" copy in EmailService.sendPasswordResetEmail.
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const RESPONDER_NOT_FOUND = 'Responder not found in this command center';
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
 
 function isUniqueViolation(error: unknown): boolean {
   return (
     typeof error === 'object' &&
     error !== null &&
     'code' in error &&
-    error.code === '23505'
+    (error as { code?: string }).code === '23505'
+  );
+}
+
+function isForeignKeyViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: string }).code === '23503'
+  );
+}
+
+function isCheckViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: string }).code === '23514'
   );
 }
 
@@ -64,6 +85,15 @@ function assertOrderedRange(
   if (Date.parse(from) > Date.parse(to)) {
     throw new BadRequestException(`${label}From must be <= ${label}To`);
   }
+}
+
+/** Clamp a page-size argument so a stray `?limit=1000000` can't hit the DB. */
+function clampLimit(value: number | undefined): number {
+  const n =
+    Number.isFinite(value) && (value as number) > 0
+      ? (value as number)
+      : DEFAULT_LIMIT;
+  return Math.min(Math.max(Math.trunc(n), 1), MAX_LIMIT);
 }
 
 @Injectable()
@@ -114,9 +144,13 @@ export class CommandCenterService {
    * Creates a new command center.
    *
    * @param dto - Data Transfer Object containing the center's attributes.
+   * @param actorId - UUID of the SUPER user performing the action.
    * @returns The newly created `CommandCenterEntity`.
    */
-  async create(dto: CreateCommandCenterDTO): Promise<CommandCenterEntity> {
+  async create(
+    dto: CreateCommandCenterDTO,
+    actorId: string,
+  ): Promise<CommandCenterEntity> {
     const createData: CreateCommandCenterData = {
       ...dto,
       name: this.sanitizeString(dto.name)!,
@@ -129,7 +163,7 @@ export class CommandCenterService {
 
       await this.createAuditLog(
         AuditAction.CREATE_CC,
-        null,
+        actorId,
         createdCenter.id,
         'command_center',
         createdCenter.id,
@@ -159,11 +193,13 @@ export class CommandCenterService {
    *
    * @param id - The UUID of the command center to update.
    * @param dto - The partial payload of fields to update.
+   * @param actorId - UUID of the SUPER user performing the action.
    * @returns The updated `CommandCenterEntity`.
    */
   async update(
     id: string,
     dto: UpdateCommandCenterDTO,
+    actorId: string,
   ): Promise<CommandCenterEntity> {
     const updateData: UpdateCommandCenterData = {
       ...dto,
@@ -195,9 +231,12 @@ export class CommandCenterService {
       throw new NotFoundException(`Command center with ID '${id}' not found`);
     }
 
+    // TODO: introduce a dedicated AuditAction (e.g. UPDATE_CC) once the enum
+    // value exists (needs a 012/013-style split migration). UPDATE_USER is
+    // semantically wrong for a command_center target.
     await this.createAuditLog(
       AuditAction.UPDATE_USER,
-      null,
+      actorId,
       id,
       'command_center',
       id,
@@ -224,8 +263,9 @@ export class CommandCenterService {
    * Hard-deletes a command center.
    *
    * @param id - The UUID of the command center.
+   * @param actorId - UUID of the SUPER user performing the action.
    */
-  async delete(id: string): Promise<void> {
+  async delete(id: string, actorId: string): Promise<void> {
     const centerToDelete = await this.commandCenterRepository.findById(id);
 
     let isDeleted = false;
@@ -233,6 +273,13 @@ export class CommandCenterService {
     try {
       isDeleted = await this.commandCenterRepository.deleteBranch(id);
     } catch (error: unknown) {
+      // A RESTRICT FK (e.g. responders still assigned) means the center
+      // cannot be removed — surface it as a 409 instead of a 500.
+      if (isForeignKeyViolation(error)) {
+        throw new ConflictException(
+          'Command center still has assigned users and cannot be deleted',
+        );
+      }
       this.logger.error(
         `Database error while attempting to delete command center ${id}`,
         error instanceof Error ? error.stack : error,
@@ -247,9 +294,10 @@ export class CommandCenterService {
       throw new NotFoundException(`Command center not found`);
     }
 
+    // TODO: dedicated AuditAction (DELETE_CC) — see update() above.
     await this.createAuditLog(
       AuditAction.UPDATE_USER,
-      null,
+      actorId,
       id,
       'command_center',
       id,
@@ -330,7 +378,7 @@ export class CommandCenterService {
   ): Promise<ResponderTableRow[]> {
     // Preserves the existing legacy quirk: only the first 20 are returned.
     const result = await this.filterResponders(actorId, centerId, {
-      limit: 20,
+      limit: DEFAULT_LIMIT,
     });
     return result.data;
   }
@@ -348,11 +396,11 @@ export class CommandCenterService {
   async getBranchRespondersPaginated(
     actorId: string,
     centerId: string,
-    limit: number = 20,
+    limit: number = DEFAULT_LIMIT,
     cursor: string | null = null,
   ): Promise<{ data: ResponderTableRow[]; nextCursor: string | null }> {
     return this.filterResponders(actorId, centerId, {
-      limit,
+      limit: clampLimit(limit),
       cursor: cursor ?? undefined,
     });
   }
@@ -373,13 +421,13 @@ export class CommandCenterService {
     actorId: string,
     centerId: string,
     status: AccountStatusEnum,
-    limit: number = 20,
+    limit: number = DEFAULT_LIMIT,
     cursor: string | null = null,
   ): Promise<{ data: ResponderTableRow[]; nextCursor: string | null }> {
     return this.filterResponders(actorId, centerId, {
       status: [status],
       includeSoftDeleted: true, // Preserves existing behavior for this route
-      limit,
+      limit: clampLimit(limit),
       cursor: cursor ?? undefined,
     });
   }
@@ -413,7 +461,7 @@ export class CommandCenterService {
       lastActiveTo: normalizeBound(filter.lastActiveTo, 'to'),
       onShift: filter.onShift,
       includeSoftDeleted: filter.includeSoftDeleted === true,
-      limit: filter.limit ?? 20,
+      limit: clampLimit(filter.limit),
       cursor: filter.cursor,
     };
 
@@ -479,6 +527,11 @@ export class CommandCenterService {
 
   /**
    * Activates a deactivated responder account.
+   *
+   * Only responders who already have a password can be reactivated: the
+   * schema's chck_auth_requirements forces `active` staff to have a
+   * password_hash, so a pending_activation account that was previously
+   * deactivated cannot be flipped back to 'active' until it has one.
    *
    * @param actorId - The UUID of the user performing the action.
    * @param centerId - The UUID of the command center.
@@ -592,6 +645,16 @@ export class CommandCenterService {
         "Another account now uses this responder's email or mobile number, so it cannot be restored",
       );
     }
+    if (isForeignKeyViolation(error)) {
+      throw new ConflictException(
+        'This operation would conflict with a related record (foreign-key constraint)',
+      );
+    }
+    if (isCheckViolation(error)) {
+      throw new ConflictException(
+        'The account is not in a state that permits this operation',
+      );
+    }
     this.logger.error(
       `Failed to ${action} ${subjectId}`,
       error instanceof Error ? error.stack : undefined,
@@ -637,48 +700,126 @@ export class CommandCenterService {
     commandCenterId: string,
     actorId: string,
   ): Promise<string> {
-    try {
-      const isExistingResponderInBranch =
-        await this.commandCenterRepository.findResponderInBranch(
-          responderId,
-          commandCenterId,
-        );
-      if (
-        !isExistingResponderInBranch ||
-        isExistingResponderInBranch === null
-      ) {
-        throw new BadRequestException();
-      }
+    const isExistingResponderInBranch =
+      await this.commandCenterRepository.findResponderInBranch(
+        responderId,
+        commandCenterId,
+      );
+    if (!isExistingResponderInBranch) {
+      throw new NotFoundException(RESPONDER_NOT_FOUND);
+    }
 
-      // Get old email for audit logging, then update
-      const oldEmail = await this.commandCenterRepository.updateEmail(
+    let oldEmail: string;
+    try {
+      oldEmail = await this.commandCenterRepository.updateEmail(
         responderId,
         email,
       );
-
-      // Perform audit logging
-      await this.auditLogsService.createAudit({
-        actorId,
-        commandCenterId,
-        action: AuditAction.UPDATE_USER,
-        targetEntity: 'user_account',
-        targetId: responderId,
-        oldPayload: { email: oldEmail },
-        newPayload: { email: email },
-      });
-
-      await this.authService.createActivationToken(email, responderId);
-
-      // RETURN OLD EMAIL FOR HTTP RESPONSE
-      return oldEmail;
     } catch (err: unknown) {
-      this.logger.error(
-        'Failed to update responder email',
-        err instanceof Error ? err.stack : err,
-      );
-      throw new InternalServerErrorException(
-        'Failed to update responder email',
+      // Repo now throws BadRequestException / NotFoundException for the
+      // already-known failure modes; only rethrow unexpected ones.
+      if (
+        err instanceof BadRequestException ||
+        err instanceof NotFoundException
+      ) {
+        throw err;
+      }
+      this.rethrow(err, 'update email for', responderId);
+    }
+
+    // TODO: wrap the two steps below in db.withTransaction once
+    // AuthService.createActivationToken accepts an optional pg client.
+    // Today, a failure in either step leaves the account with a new email
+    // and no activation token (or an unaudited change).
+    await this.auditLogsService.createAudit({
+      actorId,
+      commandCenterId,
+      action: AuditAction.UPDATE_USER,
+      targetEntity: 'user_account',
+      targetId: responderId,
+      oldPayload: { email: oldEmail },
+      newPayload: { email },
+    });
+
+    await this.authService.createActivationToken(email, responderId);
+
+    return oldEmail;
+  }
+
+  /**
+   * Reassigns a responder to a different command center (branch).
+   * SUPER-only operation. The responder must be off_duty and must currently
+   * belong to `centerId` (the branch named in the URL) — a mismatch is a 404,
+   * which makes the path parameter meaningful.
+   *
+   * @param actorId - The UUID of the SUPER user performing the action.
+   * @param centerId - The responder's CURRENT command center (URL safety check).
+   * @param responderId - The UUID of the responder to reassign.
+   * @param dto - Contains the target command center ID.
+   * @returns The target command center ID if successful.
+   */
+  async reassignResponderBranch(
+    actorId: string,
+    centerId: string,
+    responderId: string,
+    dto: ReassignBranchDTO,
+  ): Promise<string> {
+    // Defense-in-depth: also enforced by @Roles(Role.SUPER) on the controller.
+    const actorScope =
+      await this.commandCenterRepository.findActorScope(actorId);
+    if (!actorScope || actorScope.role !== Role.SUPER) {
+      throw new ForbiddenException('Only SUPER users can reassign branches');
+    }
+
+    const { targetCommandCenterId } = dto;
+
+    if (targetCommandCenterId === centerId) {
+      throw new BadRequestException(
+        'Responder is already assigned to that command center',
       );
     }
+
+    // Fail fast on a bogus target so the caller gets a clean 404.
+    // The actual UPDATE inside the repository transaction still enforces
+    // the FK, so a concurrent hard-delete of the target surfaces as a 409
+    // via rethrow() — not a silent move to a nonexistent branch.
+    const targetCenter = await this.commandCenterRepository.findById(
+      targetCommandCenterId,
+    );
+    if (!targetCenter) {
+      throw new NotFoundException('Target command center not found');
+    }
+
+    let oldCenterId: string | null = null;
+    try {
+      oldCenterId = await this.commandCenterRepository.reassignResponderBranch(
+        responderId,
+        centerId,
+        targetCommandCenterId,
+      );
+    } catch (error: unknown) {
+      this.rethrow(error, 'reassign branch for', responderId);
+    }
+
+    if (!oldCenterId) {
+      throw new NotFoundException(
+        'Responder not found in this command center, is deleted, or is not off_duty',
+      );
+    }
+
+    // TODO: replace CHANGE_ROLE with a dedicated REASSIGN_RESPONDER_BRANCH
+    // action once the enum value exists (needs a 012/013-style split
+    // migration). Role did not change — only command_center_id.
+    await this.createAuditLog(
+      AuditAction.CHANGE_ROLE,
+      actorId,
+      targetCommandCenterId,
+      'user_account',
+      responderId,
+      { command_center_id: oldCenterId },
+      { command_center_id: targetCommandCenterId },
+    );
+
+    return targetCommandCenterId;
   }
 }

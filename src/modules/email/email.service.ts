@@ -26,6 +26,7 @@ export class EmailService {
     try {
       await this.brevoProvider.sendEmail(to, subject, html);
     } catch (err: unknown) {
+      // ADD THIS LINE TEMPORARILY:
       // This only catches network-level failures or SDK crashes
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(
@@ -46,6 +47,7 @@ export class EmailService {
 
   async sendActivationEmail(to: string, rawToken: string): Promise<void> {
     const activationUrl = this.buildActionUrl('/activate', rawToken);
+    console.log('🚨 RAW ACTIVATION URL:', activationUrl);
 
     const html = `
       <p>Welcome to BANTAI! Your account has been created.</p>

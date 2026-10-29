@@ -1,4 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
 import { CreateCommandCenterData } from './types/create-command-center-data.types';
 import { UpdateCommandCenterData } from './types/update-command-center-data.types';
@@ -424,13 +428,17 @@ export class CommandCenterRepository {
       params.push(filter.lastActiveTo);
     }
 
+    // A responder whose shift_ends_at is NULL is still on-duty (the timer
+    // is set by the app when going on duty, but older code paths did not
+    // always set it — see migrations 006 and 018). Treat NULL as "no end
+    // yet" rather than "not on shift".
     if (filter.onShift === true) {
       clauses.push(
-        `p.availability = 'on_duty' AND p.shift_ends_at IS NOT NULL AND p.shift_ends_at > now()`,
+        `p.availability = 'on_duty' AND (p.shift_ends_at IS NULL OR p.shift_ends_at > now())`,
       );
     } else if (filter.onShift === false) {
       clauses.push(
-        `NOT (p.availability = 'on_duty' AND p.shift_ends_at IS NOT NULL AND p.shift_ends_at > now())`,
+        `NOT (p.availability = 'on_duty' AND (p.shift_ends_at IS NULL OR p.shift_ends_at > now()))`,
       );
     }
 
@@ -504,8 +512,13 @@ export class CommandCenterRepository {
 
   /**
    * Deactivates a responder by setting `account_status` to 'deactivated' and
-   * `deleted_at` to now(). The `trg_revoke_sessions_on_soft_delete` trigger
-   * revokes sessions and sets availability to off_duty in the same transaction.
+   * `deleted_at` to now(). The `trg_revoke_sessions_on_deactivation` trigger
+   * (013) revokes sessions and sets availability to off_duty in the same
+   * transaction.
+   *
+   * pending_activation responders are excluded: they have no password and
+   * cannot log in, so deactivating them is a no-op operationally; the
+   * correct action is to delete/recreate them or use the activation email.
    *
    * @param id - Responder UUID.
    * @param commandCenterId - Command Center UUID (for scoping).
@@ -517,13 +530,14 @@ export class CommandCenterRepository {
   ): Promise<boolean> {
     const { rows } = await this.db.query<{ id: string }>(
       `UPDATE user_account
-     SET deleted_at = now(),
-         account_status = 'deactivated'
-     WHERE id = $1
-       AND command_center_id = $2
-       AND role = $3
-       AND deleted_at IS NULL
-     RETURNING id`,
+       SET deleted_at = now(),
+           account_status = 'deactivated'
+       WHERE id = $1
+         AND command_center_id = $2
+         AND role = $3
+         AND deleted_at IS NULL
+         AND account_status <> 'pending_activation'
+       RETURNING id`,
       [id, commandCenterId, Role.RESPONDER],
     );
     return rows.length > 0;
@@ -537,16 +551,17 @@ export class CommandCenterRepository {
    * @param id - Responder UUID.
    * @param email - The new email address.
    * @returns The previous email address (used for audit logging).
-   * @throws Error if the account is not pending activation or validation fails.
+   * @throws BadRequestException on invalid input.
+   * @throws NotFoundException if the account is not pending_activation.
    */
   async updateEmail(id: string, email: string): Promise<string> {
     if (!id || !email) {
-      throw new Error('ID and email are required');
+      throw new BadRequestException('ID and email are required');
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      throw new Error('Invalid email format');
+      throw new BadRequestException('Invalid email format');
     }
 
     const sqlGetCurrent =
@@ -557,7 +572,7 @@ export class CommandCenterRepository {
     );
 
     if (currentEmailResult.rowCount === 0) {
-      throw new Error(
+      throw new NotFoundException(
         `Responder with ID ${id} not found or not in pending_activation status`,
       );
     }
@@ -566,14 +581,16 @@ export class CommandCenterRepository {
 
     const sqlUpdate =
       'UPDATE user_account SET email = $1 WHERE id = $2 AND account_status = $3';
-    const updateResult = await this.db.query<{ rowCount: number }>(sqlUpdate, [
+    const updateResult = await this.db.query(sqlUpdate, [
       email,
       id,
       AccountStatusEnum.PENDING_ACTIVATION,
     ]);
 
     if (updateResult.rowCount === 0) {
-      throw new Error(`Failed to update email for responder ID ${id}`);
+      throw new NotFoundException(
+        `Failed to update email for responder ID ${id}`,
+      );
     }
 
     return oldEmail;
@@ -606,6 +623,12 @@ export class CommandCenterRepository {
    * `account_status` back to 'active'. The `user_identity` trigger restores
    * their identities in the background.
    *
+   * Requires `password_hash IS NOT NULL`: chck_auth_requirements (013) forces
+   * active staff accounts to have a password, and a pending_activation
+   * responder never got one. Attempting to activate such a row would trip
+   * the CHECK; the WHERE clause simply excludes it so the caller gets a
+   * clean "not found" instead of a 500.
+   *
    * @param id - Responder UUID.
    * @param commandCenterId - Command Center UUID.
    * @returns `true` if found and restored, `false` otherwise.
@@ -623,7 +646,8 @@ export class CommandCenterRepository {
          AND role = $3
          AND deleted_at IS NOT NULL
          AND account_status = 'deactivated'
-     RETURNING id`,
+         AND password_hash IS NOT NULL
+       RETURNING id`,
       [id, commandCenterId, Role.RESPONDER],
     );
     return rows.length > 0;
@@ -730,5 +754,89 @@ export class CommandCenterRepository {
       [userId],
     );
     return rows[0] ?? null;
+  }
+
+  /**
+   * Reassigns a responder to a different command center (branch).
+   * Only allowed if the responder is currently off_duty and belongs to
+   * `currentCenterId`.
+   *
+   * Both the pre-check SELECT and the UPDATE run inside a single
+   * transaction. `FOR UPDATE OF u, p` locks the responder row and their
+   * r_profile row so a concurrent state change (going on duty,
+   * deactivation, a competing reassignment) cannot slip between the
+   * check and the write. The UPDATE's WHERE clause repeats the
+   * preconditions as belt-and-suspenders; if a concurrent change
+   * invalidated them, rowCount is 0 and we return null.
+   *
+   * Target command-center existence is checked by the caller (service);
+   * a concurrent hard-delete of the target still fails the FK, which
+   * surfaces as a 23503 and is mapped to a 409 by the service's
+   * rethrow().
+   *
+   * @param responderId - The UUID of the responder to reassign.
+   * @param currentCenterId - The responder's CURRENT command_center_id
+   *   (also acts as a URL-path safety check).
+   * @param targetCommandCenterId - The UUID of the target command center.
+   * @returns The responder's previous command_center_id, or `null` if
+   *   they weren't found / not off_duty / not in currentCenterId / lost a
+   *   race condition.
+   */
+  async reassignResponderBranch(
+    responderId: string,
+    currentCenterId: string,
+    targetCommandCenterId: string,
+  ): Promise<string | null> {
+    return this.db.withTransaction(async (client) => {
+      const { rows } = await client.query<{ command_center_id: string }>(
+        `SELECT u.id, u.command_center_id
+           FROM user_account u
+           JOIN r_profile p ON p.user_id = u.id
+           WHERE u.id = $1
+             AND u.role = $2
+             AND u.deleted_at IS NULL
+             AND u.command_center_id = $3
+             AND p.availability = $4
+           FOR UPDATE OF u, p`,
+        [
+          responderId,
+          Role.RESPONDER,
+          currentCenterId,
+          AvailabilityStatusEnum.OFF_DUTY,
+        ],
+      );
+      const responder = rows[0];
+      if (!responder) return null;
+
+      // updated_at is maintained by trg_user_account_updated_at on every
+      // UPDATE — no need to set it manually.
+      const { rowCount } = await client.query(
+        `UPDATE user_account u
+            SET command_center_id = $1
+          WHERE u.id = $2
+            AND u.role = $3
+            AND u.deleted_at IS NULL
+            AND u.command_center_id = $4
+            AND EXISTS (
+              SELECT 1 FROM r_profile p
+               WHERE p.user_id = u.id AND p.availability = $5
+            )`,
+        [
+          targetCommandCenterId,
+          responderId,
+          Role.RESPONDER,
+          currentCenterId,
+          AvailabilityStatusEnum.OFF_DUTY,
+        ],
+      );
+
+      if (rowCount !== 1) {
+        // A concurrent change invalidated the preconditions between the
+        // lock and the UPDATE. Treat it the same as "not eligible".
+        return null;
+      }
+
+      return responder.command_center_id;
+    });
   }
 }

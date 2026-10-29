@@ -20,6 +20,7 @@ import { CreateCommandCenterDTO } from './dto/create-command-center.dto';
 import { UpdateCommandCenterDTO } from './dto/update-command-center.dto';
 import { UpdateResponderEmailDTO } from './dto/update-email.dto';
 import { ResponderFilterDTO } from './dto/responder-filter.dto';
+import { ReassignBranchDTO } from './dto/reassign-branch.dto';
 import { CommandCenterEntity } from './interfaces/command-center.interface';
 import { ResponderTableRow } from './interfaces/responder-tb.interface';
 import { ActorOption } from './interfaces/action-option.interface';
@@ -58,8 +59,9 @@ export class CommandCenterController {
   @ApiRoles(Role.SUPER)
   async create(
     @Body() dto: CreateCommandCenterDTO,
+    @CurrentUser('sub') userId: string,
   ): Promise<CommandCenterEntity> {
-    return this.commandCenterService.create(dto);
+    return this.commandCenterService.create(dto, userId);
   }
 
   @Patch(':id')
@@ -73,10 +75,11 @@ export class CommandCenterController {
   @Roles(Role.SUPER)
   @ApiRoles(Role.SUPER)
   async update(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateCommandCenterDTO,
+    @CurrentUser('sub') userId: string,
   ): Promise<CommandCenterEntity> {
-    return this.commandCenterService.update(id, dto);
+    return this.commandCenterService.update(id, dto, userId);
   }
 
   @Delete(':id')
@@ -88,8 +91,11 @@ export class CommandCenterController {
   @Roles(Role.SUPER)
   @ApiRoles(Role.SUPER)
   @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(@Param('id') id: string): Promise<void> {
-    return this.commandCenterService.delete(id);
+  async remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser('sub') userId: string,
+  ): Promise<void> {
+    return this.commandCenterService.delete(id, userId);
   }
 
   // -------------------------------------------------------------
@@ -324,9 +330,64 @@ export class CommandCenterController {
     );
   }
 
+  @Patch(':centerId/responders/:responderId/reassign-branch')
+  @ApiOperation({
+    summary: 'Reassign a responder to a different command center (branch)',
+    description:
+      'SUPER only. The responder must be off_duty to be eligible for branch reassignment. ' +
+      'This moves the responder from their current branch (identified by :centerId) ' +
+      'to the target branch.',
+  })
+  @ApiParam({
+    name: 'centerId',
+    description: "Responder's current command center UUID",
+  })
+  @ApiParam({ name: 'responderId', description: 'Responder UUID' })
+  @ApiBody({ type: ReassignBranchDTO })
+  @ApiResponse({
+    status: 200,
+    description: 'Responder reassigned to new branch',
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Invalid target command center, or responder is already in that branch',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - SUPER role required' })
+  @ApiResponse({
+    status: 404,
+    description:
+      'Responder not found in the given current command center, deleted, or not off_duty',
+  })
+  @Roles(Role.SUPER)
+  @ApiRoles(Role.SUPER)
+  async reassignResponderBranch(
+    @Param('centerId', ParseUUIDPipe) centerId: string,
+    @Param('responderId', ParseUUIDPipe) responderId: string,
+    @Body() dto: ReassignBranchDTO,
+    @CurrentUser('sub') actorId: string,
+  ): Promise<{ targetCommandCenterId: string }> {
+    const targetId = await this.commandCenterService.reassignResponderBranch(
+      actorId,
+      centerId,
+      responderId,
+      dto,
+    );
+    return { targetCommandCenterId: targetId };
+  }
+
   @Get('me')
-  @ApiOperation({ summary: 'Get the authenticated user command center' })
-  @ApiResponse({ status: 200, description: 'Command center returned' })
+  @ApiOperation({
+    summary: 'Get the authenticated user command center',
+    description:
+      "Returns the admin's own command center. SUPER users have no branch (command_center_id is NULL by schema), so this returns null for them.",
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Command center returned, or null when the user has no branch (e.g. SUPER)',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @Roles(Role.ADMIN, Role.SUPER)
   @ApiRoles(Role.ADMIN, Role.SUPER)
