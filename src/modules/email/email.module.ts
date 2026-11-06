@@ -4,11 +4,7 @@ import { ResendProvider } from './providers/resend.provider';
 import { EmailOtpService } from './email-otp.service';
 
 @Module({
-  providers: [
-    EmailService,
-    ResendProvider,
-    EmailOtpService,
-  ],
+  providers: [EmailService, ResendProvider, EmailOtpService],
   exports: [EmailService, EmailOtpService],
 })
 export class EmailModule {}

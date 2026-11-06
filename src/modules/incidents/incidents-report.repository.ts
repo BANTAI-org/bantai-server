@@ -47,7 +47,23 @@ const INCIDENT_REPORT_SELECT = `
   i.verified_by_id      AS incident_verified_by_id,
   i.trigger_source      AS incident_trigger_source,
   i.claimed_by_id       AS incident_claimed_by_id,
-  cu.f_name || ' ' || cu.l_name AS incident_claimed_by_name`;
+  TRIM(cu.f_name || ' ' || cu.l_name) AS incident_claimed_by_name,
+
+  TRIM(u_rep.f_name || ' ' || u_rep.l_name) AS assigned_reporter_name,
+  TRIM(u_sub.f_name || ' ' || u_sub.l_name) AS submitted_by_name,
+  TRIM(u_rev.f_name || ' ' || u_rev.l_name) AS reviewed_by_name,
+  cc.name AS command_center_name
+`;
+
+const INCIDENT_REPORT_FROM = `
+  FROM incident_report r
+  JOIN incident i ON i.id = r.incident_id
+  LEFT JOIN user_account cu ON cu.id = i.claimed_by_id
+  LEFT JOIN user_account u_rep ON u_rep.id = r.assigned_reporter_id
+  LEFT JOIN user_account u_sub ON u_sub.id = r.submitted_by_id
+  LEFT JOIN user_account u_rev ON u_rev.id = r.reviewed_by
+  LEFT JOIN command_center cc ON cc.id = r.command_center_id
+`;
 
 interface ReviewDiagnosisRow {
   status: string;
@@ -97,18 +113,14 @@ interface IncidentReportRow extends Record<string, unknown> {
   incident_trigger_source: TriggerSource;
   incident_claimed_by_id: string | null;
   incident_claimed_by_name: string | null;
+
+  // 🚨 NEW FIELDS 🚨
+  assigned_reporter_name: string | null;
+  submitted_by_name: string | null;
+  reviewed_by_name: string | null;
+  command_center_name: string | null;
 }
 
-/**
- * Adds the derived booleans.
- *
- * NOTE: every comparison below uses the enum MEMBER (e.g. ReportStatus.DRAFT)
- * rather than the string literal. TS enums are nominal types, so
- * `row.status === 'draft'` fails lint (@typescript-eslint/no-unsafe-enum-
- * comparison) even though the runtime value is identical. The members are
- * already imported at the top of this file — don't "simplify" them back to
- * string literals.
- */
 function toIncidentReport(row: IncidentReportRow): IncidentReportEntity {
   return {
     ...row,
@@ -124,7 +136,6 @@ function toIncidentReport(row: IncidentReportRow): IncidentReportEntity {
     is_incident_cancelled: row.incident_status === IncidentStatus.CANCELLED,
     is_incident_pending_verification:
       row.incident_status === IncidentStatus.AWAITING_VERIFICATION,
-    // Mirrors chck_incident_resolution_safety_gate: fail-case only.
     needs_incident_verification:
       row.incident_status === IncidentStatus.AWAITING_VERIFICATION &&
       row.incident_verified_at === null &&
@@ -322,9 +333,7 @@ export class IncidentReportRepository {
           RETURNING *
        )
        SELECT ${INCIDENT_REPORT_SELECT}
-         FROM updated r
-         JOIN incident i ON i.id = r.incident_id
-         LEFT JOIN user_account cu ON cu.id = i.claimed_by_id`,
+       ${INCIDENT_REPORT_FROM.replace('incident_report r', 'updated r')}`,
       params,
     );
     return rows[0] ? toIncidentReport(rows[0]) : null;
@@ -333,9 +342,7 @@ export class IncidentReportRepository {
   async findReportById(reportId: string): Promise<IncidentReportEntity | null> {
     const rows = await this.queryRows<IncidentReportRow>(
       `SELECT ${INCIDENT_REPORT_SELECT}
-         FROM incident_report r
-         JOIN incident i ON i.id = r.incident_id
-         LEFT JOIN user_account cu ON cu.id = i.claimed_by_id
+       ${INCIDENT_REPORT_FROM}
         WHERE r.id = $1::uuid`,
       [reportId],
     );
@@ -391,9 +398,7 @@ export class IncidentReportRepository {
 
     const rows = await this.queryRows<IncidentReportRow & { cursor_t: string }>(
       `SELECT ${INCIDENT_REPORT_SELECT}, ${cursorTsSql(sortAt)} AS ${CURSOR_COLUMN}
-         FROM incident_report r
-         JOIN incident i ON i.id = r.incident_id
-         LEFT JOIN user_account cu ON cu.id = i.claimed_by_id
+       ${INCIDENT_REPORT_FROM}
         WHERE ${whereSql}
           ${keyset}
         ORDER BY ${sortAt} ASC, r.id ASC
@@ -435,8 +440,7 @@ export class IncidentReportRepository {
          COUNT(*) FILTER (WHERE r.status = 'under_review')::int   AS under_review,
          COUNT(*) FILTER (WHERE r.status = 'needs_revision')::int AS needs_revision,
          COUNT(*) FILTER (WHERE r.status = 'approved')::int       AS approved
-       FROM incident_report r
-       JOIN incident i ON i.id = r.incident_id
+       ${INCIDENT_REPORT_FROM}
        WHERE ${whereSql}`,
       params,
     );
@@ -485,9 +489,8 @@ export class IncidentReportRepository {
 
     const totalRows = await this.queryRows<{ total: number }>(
       `SELECT COUNT(*)::int AS total
-         FROM incident_report r
-         JOIN incident i ON i.id = r.incident_id
-        WHERE ${whereSql}`,
+       ${INCIDENT_REPORT_FROM}
+       WHERE ${whereSql}`,
       params,
     );
     const total = totalRows[0]?.total ?? 0;
@@ -501,9 +504,7 @@ export class IncidentReportRepository {
 
     const items = await this.queryRows<IncidentReportRow>(
       `SELECT ${INCIDENT_REPORT_SELECT}
-         FROM incident_report r
-         JOIN incident i ON i.id = r.incident_id
-         LEFT JOIN user_account cu ON cu.id = i.claimed_by_id
+       ${INCIDENT_REPORT_FROM}
         WHERE ${whereSql}
         ORDER BY ${orderBy}
         LIMIT $${limitParam} OFFSET $${offsetParam}`,
