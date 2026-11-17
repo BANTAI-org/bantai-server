@@ -16,6 +16,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { S3Service } from './s3.service';
+import { ClipsService } from './clips.service';
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/role.decorator';
@@ -30,8 +31,9 @@ import {
   SignPartsDto,
   CompleteMultipartDto,
 } from './dto/multipart-evidence.dto';
+import { ClipCountResponse, ClipGroupWithUrls } from './interfaces/clips.types';
+import { CursorPageResponseDto } from '../incidents/dto/cursor-page-response.dto';
 
-// Allowlist of safe extensions for profile images and evidence
 const ALLOWED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp'];
 const ALLOWED_EVIDENCE_EXTENSIONS = [
   'mp4',
@@ -49,6 +51,7 @@ const ALLOWED_EVIDENCE_EXTENSIONS = [
 export class StorageController {
   constructor(
     private readonly s3Service: S3Service,
+    private readonly clipsService: ClipsService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -67,9 +70,8 @@ export class StorageController {
     @Body() dto: RequestUploadUrlDto,
     @CurrentUser('sub') userId: string,
   ): Promise<{ uploadUrl: string; objectKey: string }> {
-    // Extract and validate extension safely
     const rawExtension = dto.contentType.split('/')[1]?.toLowerCase() || '';
-    const extension = rawExtension.split('+')[0]; // handle image/svg+xml
+    const extension = rawExtension.split('+')[0];
 
     if (!ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
       throw new BadRequestException(
@@ -91,9 +93,6 @@ export class StorageController {
     return { uploadUrl: url, objectKey: key };
   }
 
-  // =====================================================================
-  // NEW: Single PUT Upload for Evidence Photos
-  // =====================================================================
   @Post('evidence/upload-url')
   @Roles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
   @ApiRoles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
@@ -122,7 +121,6 @@ export class StorageController {
     const rawExtension = dto.contentType.split('/')[1]?.toLowerCase() || '';
     const extension = rawExtension.split('+')[0];
 
-    // Only allow image types for this single upload endpoint
     if (!['jpg', 'jpeg', 'png', 'webp'].includes(extension)) {
       throw new BadRequestException(
         `Invalid image type. Allowed: jpg, jpeg, png, webp`,
@@ -145,9 +143,6 @@ export class StorageController {
     return { uploadUrl: url, objectKey: key };
   }
 
-  // =====================================================================
-  // Multipart Upload for Evidence Videos (Now allows RESPONDERS)
-  // =====================================================================
   @Post('evidence/multipart/initiate')
   @Roles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
   @ApiRoles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
@@ -171,7 +166,6 @@ export class StorageController {
     @CurrentUser('sub') userId: string,
     @Query('incidentId') incidentId?: string,
   ): Promise<{ uploadId: string; objectKey: string }> {
-    // Extract and validate extension safely
     const extension = dto.fileName.split('.').pop()?.toLowerCase() || 'mp4';
     if (!ALLOWED_EVIDENCE_EXTENSIONS.includes(extension)) {
       throw new BadRequestException(
@@ -240,6 +234,44 @@ export class StorageController {
     return { objectKey: dto.key, success: true };
   }
 
+  @Get('clips/count')
+  @Roles(Role.DRIVER)
+  @ApiRoles(Role.DRIVER)
+  @ApiOperation({
+    summary: 'Get total clip count for the authenticated driver',
+  })
+  @ApiResponse({ status: 200, description: 'Clip count returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async getClipsCount(
+    @CurrentUser('sub') driverId: string,
+  ): Promise<ClipCountResponse> {
+    return this.clipsService.countClips(driverId);
+  }
+
+  @Get('clips')
+  @Roles(Role.DRIVER)
+  @ApiRoles(Role.DRIVER)
+  @ApiOperation({
+    summary: 'List clips stored for the authenticated driver',
+    description:
+      'Cursor-paginated, grouped by incident. Each clip includes a presigned download URL (1h TTL).',
+  })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'cursor', required: false, type: String })
+  @ApiResponse({ status: 200, description: 'Clip page returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async getClips(
+    @CurrentUser('sub') driverId: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ): Promise<CursorPageResponseDto<ClipGroupWithUrls>> {
+    const page = await this.clipsService.findClips(driverId, {
+      limit: limit ? parseInt(limit, 10) : undefined,
+      cursor,
+    });
+    return CursorPageResponseDto.from(page, (group) => group);
+  }
+
   @Get('download-url')
   @Roles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
   @ApiRoles(Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER)
@@ -253,7 +285,6 @@ export class StorageController {
     @Query('key') key: string,
     @Query('bucket') bucketType: 'profile' | 'evidence',
   ): Promise<{ downloadUrl: string }> {
-    // Basic validation to prevent path traversal
     if (key.includes('..')) {
       throw new BadRequestException('Invalid object key');
     }

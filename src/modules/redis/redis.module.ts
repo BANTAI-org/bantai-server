@@ -3,18 +3,16 @@ import { ConfigModule } from '@nestjs/config';
 import type { Redis } from 'ioredis';
 import { RedisController } from './redis.controller';
 import { RedisService } from './redis.service';
+import { DistanceService } from './distance.service';
 import { REDIS_CLIENT, redisProvider } from './provider/redis.provider';
 import { DatabaseModule } from '../../database/database.module';
-/**
- * Global on purpose: infrastructure that the drivers, responders and
- * dispatch code all need, without each module re-importing it.
- */
+
 @Global()
 @Module({
   imports: [ConfigModule, DatabaseModule],
   controllers: [RedisController],
-  providers: [redisProvider, RedisService],
-  exports: [REDIS_CLIENT, RedisService],
+  providers: [redisProvider, RedisService, DistanceService],
+  exports: [REDIS_CLIENT, RedisService, DistanceService],
 })
 export class RedisModule implements OnApplicationShutdown {
   constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {}

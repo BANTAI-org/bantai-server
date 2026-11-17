@@ -68,6 +68,7 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ChangeDutyDto } from './dto/change-duty-driver.dto';
 import { DutyStatusEnum } from './enums/duty-status.enum';
 import { REDIS_CLIENT } from '../redis/provider/redis.provider';
+import { DistanceService } from '../redis/distance.service';
 
 type IdentityFields = Pick<
   CreateDriverUserAccount,
@@ -82,7 +83,6 @@ const RESET_TOKEN_TTL_SECONDS = 10 * 60;
 const RESET_SESSION_EXPIRED_MESSAGE =
   'Your reset token has expired. Please request a new one.';
 
-/** Only a hash of the reset token ever touches Redis. */
 const resetTokenKey = (token: string): string =>
   `pwreset:token:${createHash('sha256').update(token).digest('hex')}`;
 
@@ -98,6 +98,7 @@ export class DriverService {
     private readonly emailOtpService: EmailOtpService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
     private readonly authService: AuthService,
+    private readonly distanceService: DistanceService,
   ) {}
 
   async createDriver(
@@ -166,7 +167,6 @@ export class DriverService {
     const { id } = await this.createDriver(dto, phoneVerifiedAt);
 
     try {
-      // Drivers belong to no command center, hence null.
       const tokens = await this.authService.generateTokens(
         id,
         Role.DRIVER,
@@ -233,21 +233,6 @@ export class DriverService {
     return profile;
   }
 
-  // ---------------------------------------------------------------
-  // Forgot-password (3 steps)
-  //   1. requestPasswordResetOtp: sends a 6-digit code (SMS or email)
-  //   2. verifyPasswordResetOtp: checks the code, issues a reset token
-  //   3. resetPassword: reset token + new password
-  //
-  // The OTP is spent in step 2, so the reset token is what proves to
-  // step 3 that step 2 was passed.
-  // ---------------------------------------------------------------
-
-  /**
-   * Always answers the same way, whether or not an account matches, so this
-   * can't be used to find out who is registered. The send runs in the
-   * background so response timing and provider errors can't leak that either.
-   */
   async requestPasswordResetOtp(
     dto: PasswordResetIdentityDto,
   ): Promise<OtpRequestResult> {
@@ -269,16 +254,11 @@ export class DriverService {
     };
   }
 
-  /**
-   * Step 2: verifies the code. On success the code is spent and a
-   * single-use reset token is issued, which step 3 requires.
-   */
   async verifyPasswordResetOtp(dto: VerifyOtpDto): Promise<ResetTokenResult> {
     const identity = this.pickResetIdentity(dto);
     const driver = await this.findPasswordResetTarget(identity);
     if (!driver) throw new BadRequestException(INVALID_CODE_MESSAGE);
 
-    // 6 digits is only 1,000,000 guesses, so cap them per account.
     const attempts = await this.hitCounter(
       `pwreset:attempts:${driver.id}`,
       EMAIL_OTP_TTL_SECONDS,
@@ -293,7 +273,6 @@ export class DriverService {
       );
     }
 
-    // Throws on a wrong, expired or reused code. Nothing below runs then.
     await this.verifyResetCode(
       this.resetChannelFor(identity, driver),
       dto.otp_code,
@@ -315,18 +294,10 @@ export class DriverService {
     };
   }
 
-  /**
-   * Step 3: spends the reset token and sets the new password. Signs the
-   * driver out everywhere.
-   */
   async resetPassword(dto: ResetPasswordDto): Promise<void> {
-    // GETDEL (Redis >= 6.2) reads and deletes atomically, so a token can
-    // never be used twice, even by two simultaneous requests.
     const driverId = await this.redis.getdel(resetTokenKey(dto.reset_token));
     if (!driverId) throw new BadRequestException(RESET_SESSION_EXPIRED_MESSAGE);
 
-    // Hash only AFTER the token is good, so unauthenticated callers can't
-    // make the server burn bcrypt time.
     const passwordHash = await bcrypt.hash(dto.new_password, BCRYPT_ROUNDS);
 
     let updated: boolean;
@@ -345,8 +316,6 @@ export class DriverService {
     identity: ResetIdentity,
     driver: DriverPasswordTarget,
   ): Promise<void> {
-    // Keyed by account id, so switching between id / email / phone can't
-    // get around the limits.
     const cooldownKey = `pwreset:cooldown:${driver.id}`;
     const claimed = await this.redis.set(
       cooldownKey,
@@ -371,12 +340,10 @@ export class DriverService {
         await this.emailOtpService.send(channel.email, RESET_OTP_PURPOSE);
       }
     } catch (error: unknown) {
-      // Nothing was delivered, so don't make them wait out the cooldown.
       await this.redis.del(cooldownKey);
       throw error;
     }
 
-    // A fresh code gets a fresh guess budget.
     await this.redis.del(`pwreset:attempts:${driver.id}`);
   }
 
@@ -396,7 +363,6 @@ export class DriverService {
     if (!valid) throw new BadRequestException(INVALID_CODE_MESSAGE);
   }
 
-  /** Email -> email code. Phone -> SMS. Id -> SMS to the phone on file, else email. */
   private resetChannelFor(
     identity: ResetIdentity,
     driver: DriverPasswordTarget,
@@ -437,7 +403,6 @@ export class DriverService {
     }
   }
 
-  /** INCR + EXPIRE NX in one MULTI, so a counter can never be left without a TTL. */
   private async hitCounter(key: string, ttlSeconds: number): Promise<number> {
     const results = await this.redis
       .multi()
@@ -552,6 +517,10 @@ export class DriverService {
   }
 
   async setDutyStatus(userId: string, dto: ChangeDutyDto) {
+    if (dto.duty_status === DutyStatusEnum.OFF_DUTY) {
+      await this.distanceService.endSession(userId);
+    }
+
     const result = await this.driverRepository.setDuty(
       userId,
       dto.duty_status,
@@ -561,7 +530,10 @@ export class DriverService {
       throw new NotFoundException('Driver account not found');
     }
 
-    // Publish duty update for WebSocket gateway
+    if (dto.duty_status === DutyStatusEnum.ON_DUTY) {
+      await this.distanceService.startSession(userId);
+    }
+
     const status =
       dto.duty_status === DutyStatusEnum.ON_DUTY ? 'on duty' : 'off duty';
     await this.redis.publish(

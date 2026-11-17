@@ -14,8 +14,9 @@ import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { UpdateLocationDto } from './dto/update-location.dto';
 import { RedisService } from './redis.service';
+import { DistanceService } from './distance.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { DatabaseService } from '../../database/database.service'; // 👈 Import
+import { DatabaseService } from '../../database/database.service';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -26,10 +27,6 @@ import {
 
 const bodyPipe = new ValidationPipe({ whitelist: true, transform: true });
 
-/**
- * Two routes instead of one so the role comes from the guard, not from
- * anything the client sends. The user id always comes from the JWT.
- */
 @Controller('location')
 @UseGuards(JwtGuard, RolesGuard)
 @ApiTags('Location')
@@ -37,6 +34,7 @@ const bodyPipe = new ValidationPipe({ whitelist: true, transform: true });
 export class RedisController {
   constructor(
     private readonly redisService: RedisService,
+    private readonly distanceService: DistanceService,
     private readonly db: DatabaseService,
   ) {}
 
@@ -53,6 +51,7 @@ export class RedisController {
     @Body(bodyPipe) dto: UpdateLocationDto,
     @CurrentUser('sub') driverId: string,
   ): Promise<void> {
+    await this.distanceService.accumulate(driverId, dto);
     await this.redisService.update(
       driverId,
       'driver',

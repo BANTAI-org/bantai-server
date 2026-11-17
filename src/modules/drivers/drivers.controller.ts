@@ -37,6 +37,7 @@ import { ChangeDutyDto } from './dto/change-duty-driver.dto';
 
 import { IncidentService } from '../incidents/incidents.service';
 import { RedisService } from '../redis/redis.service';
+import { DistanceService, DistanceSnapshot } from '../redis/distance.service';
 import { haversineDistance } from '../../common/utils/geo.utils';
 import {
   ApiBearerAuth,
@@ -55,6 +56,7 @@ export class DriverController {
     private readonly refreshCookie: RefreshCookieService,
     private readonly incidentService: IncidentService,
     private readonly redisService: RedisService,
+    private readonly distanceService: DistanceService,
   ) {}
   logger = new Logger(DriverController.name);
   private readonly MAX_LOCATION_AGE_MS = 30_000;
@@ -172,6 +174,20 @@ export class DriverController {
   ) {
     this.logger.debug(`received user id: ${userId}`);
     return this.driverService.setDutyStatus(userId, dto);
+  }
+
+  @Get('telemetry/distance')
+  @ApiOperation({ summary: 'Get the authenticated driver distance snapshot' })
+  @ApiResponse({ status: 200, description: 'Distance snapshot returned' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(Role.DRIVER)
+  @ApiRoles(Role.DRIVER)
+  async getDistanceTelemetry(
+    @CurrentUser('sub') userId: string,
+  ): Promise<DistanceSnapshot> {
+    return this.distanceService.getSnapshot(userId);
   }
 
   @Get(':driverId/incidents/:incidentId/responder-distance')
