@@ -14,6 +14,8 @@ import {
   ApiOperation,
   ApiResponse,
   ApiQuery,
+  ApiExtraModels,
+  getSchemaPath,
 } from '@nestjs/swagger';
 import { S3Service } from './s3.service';
 import { ClipsService } from './clips.service';
@@ -31,7 +33,7 @@ import {
   SignPartsDto,
   CompleteMultipartDto,
 } from './dto/multipart-evidence.dto';
-import { ClipCountResponse, ClipGroupWithUrls } from './interfaces/clips.types';
+import { ClipCountResponseDto, ClipGroupWithUrlsDto } from './dto/clips.dto';
 import { CursorPageResponseDto } from '../incidents/dto/cursor-page-response.dto';
 
 const ALLOWED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp'];
@@ -46,6 +48,7 @@ const ALLOWED_EVIDENCE_EXTENSIONS = [
 
 @ApiTags('Storage')
 @ApiBearerAuth()
+@ApiExtraModels(CursorPageResponseDto, ClipGroupWithUrlsDto)
 @Controller('storage')
 @UseGuards(JwtGuard, RolesGuard)
 export class StorageController {
@@ -240,11 +243,15 @@ export class StorageController {
   @ApiOperation({
     summary: 'Get total clip count for the authenticated driver',
   })
-  @ApiResponse({ status: 200, description: 'Clip count returned' })
+  @ApiResponse({
+    status: 200,
+    description: 'Clip count returned',
+    type: ClipCountResponseDto,
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getClipsCount(
     @CurrentUser('sub') driverId: string,
-  ): Promise<ClipCountResponse> {
+  ): Promise<ClipCountResponseDto> {
     return this.clipsService.countClips(driverId);
   }
 
@@ -258,17 +265,34 @@ export class StorageController {
   })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'cursor', required: false, type: String })
-  @ApiResponse({ status: 200, description: 'Clip page returned' })
+  @ApiResponse({
+    status: 200,
+    description: 'Clip page returned',
+    schema: {
+      allOf: [
+        { $ref: getSchemaPath(CursorPageResponseDto) },
+        {
+          properties: {
+            items: {
+              type: 'array',
+              items: { $ref: getSchemaPath(ClipGroupWithUrlsDto) },
+            },
+          },
+        },
+      ],
+    },
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getClips(
     @CurrentUser('sub') driverId: string,
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
-  ): Promise<CursorPageResponseDto<ClipGroupWithUrls>> {
+  ): Promise<CursorPageResponseDto<ClipGroupWithUrlsDto>> {
     const page = await this.clipsService.findClips(driverId, {
       limit: limit ? parseInt(limit, 10) : undefined,
       cursor,
     });
+    // Removed the `as unknown as` assertion. Structural typing handles it.
     return CursorPageResponseDto.from(page, (group) => group);
   }
 

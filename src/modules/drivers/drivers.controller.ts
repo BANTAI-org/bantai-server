@@ -37,7 +37,8 @@ import { ChangeDutyDto } from './dto/change-duty-driver.dto';
 
 import { IncidentService } from '../incidents/incidents.service';
 import { RedisService } from '../redis/redis.service';
-import { DistanceService, DistanceSnapshot } from '../redis/distance.service';
+import { DistanceService } from '../redis/distance.service';
+import { DistanceSnapshotDto } from './dto/distance-telemetry.dto';
 import { haversineDistance } from '../../common/utils/geo.utils';
 import {
   ApiBearerAuth,
@@ -47,6 +48,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+
 @Controller('drivers')
 @ApiTags('Drivers')
 @ApiBearerAuth('access-token')
@@ -178,7 +180,11 @@ export class DriverController {
 
   @Get('telemetry/distance')
   @ApiOperation({ summary: 'Get the authenticated driver distance snapshot' })
-  @ApiResponse({ status: 200, description: 'Distance snapshot returned' })
+  @ApiResponse({
+    status: 200,
+    description: 'Distance snapshot returned',
+    type: DistanceSnapshotDto,
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtGuard, RolesGuard)
@@ -186,7 +192,7 @@ export class DriverController {
   @ApiRoles(Role.DRIVER)
   async getDistanceTelemetry(
     @CurrentUser('sub') userId: string,
-  ): Promise<DistanceSnapshot> {
+  ): Promise<DistanceSnapshotDto> {
     return this.distanceService.getSnapshot(userId);
   }
 
