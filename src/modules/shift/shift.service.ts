@@ -10,6 +10,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import type { Redis } from 'ioredis';
 import { RedisService, TrackedRole } from '../redis/redis.service';
+import { DistanceService } from '../redis/distance.service';
 import { REDIS_CLIENT } from '../redis/provider/redis.provider';
 import { Role } from '../../common/enums/role-enum';
 import { ShiftRepository } from './shift.repository';
@@ -41,6 +42,7 @@ export class ShiftService {
     private readonly redis: RedisService,
     @Inject(REDIS_CLIENT) private readonly redisRaw: Redis,
     private readonly events: EventEmitter2,
+    private readonly distanceService: DistanceService,
   ) {}
 
   // ==================================================================
@@ -211,6 +213,16 @@ export class ShiftService {
         await this.redis.remove(userId, 'driver').catch((error) => {
           this.logger.warn(
             `Failed to remove driver ${userId} from Redis after shift expiry`,
+            error instanceof Error ? error.stack : String(error),
+          );
+        });
+
+        // Persist the distance shift log and clear Redis session keys.
+        // This runs after the bulk transaction has committed, so we catch
+        // and log errors to ensure the sweeper continues processing others.
+        await this.distanceService.endSession(userId).catch((error) => {
+          this.logger.error(
+            `Failed to persist distance shift log for driver ${userId}`,
             error instanceof Error ? error.stack : String(error),
           );
         });
