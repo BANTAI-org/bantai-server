@@ -27,6 +27,10 @@ import {
   JoinChannelDto,
   SendMessageDto,
   JoinChannelResponseDto,
+  ParticipantDto,
+  RadioQueueItemDto,
+  CommMessageResponseDto,
+  ActiveChannelResponseDto,
 } from './dto/comms.dto';
 import { CommMessage } from './interfaces/comms-message.interface';
 
@@ -37,11 +41,23 @@ import { CommMessage } from './interfaces/comms-message.interface';
 export class CommsController {
   constructor(private readonly commsService: CommsService) {}
 
-  /**
-   * @description
-   * Joins the tactical channel for a specific incident.
-   * Returns the Cloudflare RealtimeKit token.
-   */
+  @Get('active')
+  @ApiOperation({
+    summary: 'Get the current active comms channel for the user',
+    description:
+      'Used when a user returns to the Comms tab to re-fetch the room state.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Active channel returned (or null if none)',
+    type: ActiveChannelResponseDto,
+  })
+  async getActiveChannel(
+    @CurrentUser('sub') userId: string,
+  ): Promise<ActiveChannelResponseDto | null> {
+    return this.commsService.getActiveChannel(userId);
+  }
+
   @Post(':incidentId/join')
   @ApiOperation({
     summary: 'Join a tactical channel and get a RealtimeKit token',
@@ -70,11 +86,45 @@ export class CommsController {
     );
   }
 
-  /**
-   * @description
-   * Request the Push-to-Talk microphone.
-   * Peers must be en_route or on_scene to request.
-   */
+  @Get(':channelId/participants')
+  @ApiOperation({
+    summary: 'View all active participants in the channel',
+    description:
+      'Returns drivers with their operator details, and responders with their CC details.',
+  })
+  @ApiParam({ name: 'channelId', description: 'Channel UUID', format: 'uuid' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of participants',
+    type: [ParticipantDto],
+  })
+  @ApiResponse({ status: 403, description: 'Not a participant' })
+  async getParticipants(
+    @Param('channelId', ParseUUIDPipe) channelId: string,
+    @CurrentUser('sub') userId: string,
+  ): Promise<ParticipantDto[]> {
+    return this.commsService.getParticipants(channelId, userId);
+  }
+
+  @Get(':channelId/radio/queue')
+  @ApiOperation({
+    summary: 'View the active Push-to-Talk queue',
+    description: 'Returns the current speaker and everyone waiting in line.',
+  })
+  @ApiParam({ name: 'channelId', description: 'Channel UUID', format: 'uuid' })
+  @ApiResponse({
+    status: 200,
+    description: 'PTT Queue returned',
+    type: [RadioQueueItemDto],
+  })
+  @ApiResponse({ status: 403, description: 'Not a participant' })
+  async getQueue(
+    @Param('channelId', ParseUUIDPipe) channelId: string,
+    @CurrentUser('sub') userId: string,
+  ): Promise<RadioQueueItemDto[]> {
+    return this.commsService.getRadioQueue(channelId, userId);
+  }
+
   @Post(':channelId/radio/request')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Request the Push-to-Talk microphone' })
@@ -96,11 +146,6 @@ export class CommsController {
     return { status: 'queued' };
   }
 
-  /**
-   * @description
-   * Release the Push-to-Talk microphone.
-   * Automatically grants the mic to the next person in the queue.
-   */
   @Post(':channelId/radio/release')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Release the microphone' })
@@ -114,11 +159,6 @@ export class CommsController {
     return { status: 'released' };
   }
 
-  /**
-   * @description
-   * Send a text message to the channel.
-   * Peers must be en_route or on_scene to send.
-   */
   @Post(':channelId/messages')
   @ApiOperation({ summary: 'Send a text message to the channel' })
   @ApiParam({ name: 'channelId', description: 'Channel UUID', format: 'uuid' })
@@ -136,10 +176,6 @@ export class CommsController {
     return this.commsService.sendMessage(channelId, userId, role, dto.content);
   }
 
-  /**
-   * @description
-   * Get the chat history for a channel.
-   */
   @Get(':channelId/messages')
   @ApiOperation({ summary: 'Get chat history for a channel' })
   @ApiParam({ name: 'channelId', description: 'Channel UUID', format: 'uuid' })
@@ -149,7 +185,11 @@ export class CommsController {
     type: Number,
     description: 'Max messages to return (default 50)',
   })
-  @ApiResponse({ status: 200, description: 'Message history returned' })
+  @ApiResponse({
+    status: 200,
+    description: 'Message history returned',
+    type: [CommMessageResponseDto],
+  })
   async getMessages(
     @Param('channelId', ParseUUIDPipe) channelId: string,
     @Query('limit') limit?: string,

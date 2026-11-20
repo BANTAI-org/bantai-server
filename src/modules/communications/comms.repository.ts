@@ -7,6 +7,7 @@ import { CommRadioQueueView } from './interfaces/comms-radio-queue-view.interfac
 import { CommParticipantRole } from './enums/comms-participant-role.enum';
 import { CommRadioStatus } from './enums/comms-radio-status.enum';
 import { Role } from '../../common/enums/role-enum';
+import { ParticipantDto, ActiveChannelResponseDto } from './dto/comms.dto';
 
 @Injectable()
 export class CommsRepository {
@@ -16,10 +17,6 @@ export class CommsRepository {
   // CHANNELS
   // =====================================================================
 
-  /**
-   * @description
-   * Finds the active communications channel associated with a specific incident.
-   */
   async findChannelByIncident(incidentId: string): Promise<CommChannel | null> {
     const [row] = await queryRows<CommChannel>(
       this.db,
@@ -29,10 +26,6 @@ export class CommsRepository {
     return row || null;
   }
 
-  /**
-   * @description
-   * Finds a channel by its direct UUID (used for permission checks).
-   */
   async getChannelById(channelId: string): Promise<CommChannel | null> {
     const [row] = await queryRows<CommChannel>(
       this.db,
@@ -42,11 +35,6 @@ export class CommsRepository {
     return row || null;
   }
 
-  /**
-   * @description
-   * Creates a new communications channel for an incident.
-   * Triggered automatically when an incident is created.
-   */
   async createIncidentChannel(
     incidentId: string,
     name: string,
@@ -60,16 +48,34 @@ export class CommsRepository {
     return row.id;
   }
 
+  async findActiveChannelByUser(
+    userId: string,
+  ): Promise<ActiveChannelResponseDto | null> {
+    const [row] = await queryRows<ActiveChannelResponseDto>(
+      this.db,
+      `SELECT 
+         c.id AS channel_id,
+         c.incident_id,
+         c.name AS channel_name,
+         i.status AS incident_status
+       FROM comm_participant cp
+       JOIN comm_channel c ON c.id = cp.channel_id
+       JOIN incident i ON i.id = c.incident_id
+       WHERE cp.user_id = $1::uuid
+         AND cp.left_at IS NULL
+         AND c.status = 'active'
+         AND i.status NOT IN ('RESOLVED', 'CANCELLED')
+       ORDER BY cp.joined_at DESC
+       LIMIT 1`,
+      [userId],
+    );
+    return row || null;
+  }
+
   // =====================================================================
   // PERMISSIONS
   // =====================================================================
 
-  /**
-   * @description
-   * Checks if a user is authorized to communicate (send text/voice) in an incident.
-   * Responders/Admins are always allowed.
-   * Peers are ONLY allowed if they are en_route or on_scene.
-   */
   async canUserCommunicate(
     incidentId: string,
     userId: string,
@@ -90,6 +96,18 @@ export class CommsRepository {
     return ['en_route', 'on_scene'].includes(row.status);
   }
 
+  async isParticipant(channelId: string, userId: string): Promise<boolean> {
+    const [row] = await queryRows<{ exists: boolean }>(
+      this.db,
+      `SELECT EXISTS(
+         SELECT 1 FROM comm_participant 
+         WHERE channel_id = $1::uuid AND user_id = $2::uuid AND left_at IS NULL
+       ) AS exists`,
+      [channelId, userId],
+    );
+    return row?.exists ?? false;
+  }
+
   // =====================================================================
   // PARTICIPANTS
   // =====================================================================
@@ -102,7 +120,8 @@ export class CommsRepository {
     await this.db.query(
       `INSERT INTO comm_participant (channel_id, user_id, role)
        VALUES ($1::uuid, $2::uuid, $3)
-       ON CONFLICT (channel_id, user_id) DO NOTHING`,
+       ON CONFLICT (channel_id, user_id) 
+       DO UPDATE SET left_at = NULL, role = EXCLUDED.role`,
       [channelId, userId, role],
     );
   }
@@ -111,6 +130,33 @@ export class CommsRepository {
     await this.db.query(
       `UPDATE comm_participant SET left_at = now() WHERE channel_id = $1::uuid AND user_id = $2::uuid AND left_at IS NULL`,
       [channelId, userId],
+    );
+  }
+
+  async getParticipants(channelId: string): Promise<ParticipantDto[]> {
+    return queryRows<ParticipantDto>(
+      this.db,
+      `SELECT
+         u.id,
+         TRIM(u.f_name || ' ' || u.l_name) AS name,
+         u.avatar_url,
+         cp.role,
+         cp.joined_at,
+         dp.service_provider,
+         dp.service_id,
+         rp.rank,
+         rp.agency,
+         cc.id AS command_center_id,
+         cc.name AS command_center_name
+       FROM comm_participant cp
+       JOIN user_account u ON u.id = cp.user_id
+       LEFT JOIN d_profile dp ON dp.user_id = u.id
+       LEFT JOIN r_profile rp ON rp.user_id = u.id
+       LEFT JOIN command_center cc ON cc.id = u.command_center_id
+       WHERE cp.channel_id = $1::uuid
+         AND cp.left_at IS NULL
+       ORDER BY cp.joined_at ASC`,
+      [channelId],
     );
   }
 

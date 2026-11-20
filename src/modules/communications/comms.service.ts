@@ -13,6 +13,11 @@ import { CommsEvents } from './comms.gateway';
 import type { CommMessage } from './interfaces/comms-message.interface';
 import { IncidentEvents } from '../incidents/events/incident-events';
 import type { IncidentCreatedEvent } from '../incidents/events/incident-events';
+import {
+  ParticipantDto,
+  RadioQueueItemDto,
+  ActiveChannelResponseDto,
+} from './dto/comms.dto';
 
 @Injectable()
 export class CommsService {
@@ -22,27 +27,20 @@ export class CommsService {
     private readonly events: EventEmitter2,
   ) {}
 
-  /**
-   * @description
-   * Automatically spawns a communications channel when an incident is created.
-   * Creates the channel in Postgres and initializes the WebRTC room in Cloudflare.
-   */
   @OnEvent(IncidentEvents.CREATED)
   async handleIncidentCreated(event: IncidentCreatedEvent): Promise<void> {
     const channelName = `Incident ${event.incidentId.substring(0, 8)} - ${event.threatType}`;
 
-    // 1. Create in Postgres
     await this.repo.createIncidentChannel(event.incidentId, channelName);
-
-    // 2. Create in Cloudflare RealtimeKit
     await this.realtimeKit.createMeeting(channelName);
   }
 
-  /**
-   * @description
-   * Handles a user joining the tactical channel for an incident.
-   * Returns the channelId and the RealtimeKit authToken for WebRTC.
-   */
+  async getActiveChannel(
+    userId: string,
+  ): Promise<ActiveChannelResponseDto | null> {
+    return this.repo.findActiveChannelByUser(userId);
+  }
+
   async joinChannel(
     incidentId: string,
     userId: string,
@@ -73,10 +71,39 @@ export class CommsService {
     return { channelId: channel.id, authToken };
   }
 
-  /**
-   * @description
-   * Request the Push-to-Talk microphone. Enforces permissions before granting.
-   */
+  async getParticipants(
+    channelId: string,
+    userId: string,
+  ): Promise<ParticipantDto[]> {
+    const isMember = await this.repo.isParticipant(channelId, userId);
+    if (!isMember) {
+      throw new ForbiddenException('You are not a participant in this channel');
+    }
+
+    const participants = await this.repo.getParticipants(channelId);
+
+    return participants.map((p) => ({
+      ...p,
+      joined_at: new Date(p.joined_at).toISOString(),
+    }));
+  }
+
+  async getRadioQueue(
+    channelId: string,
+    userId: string,
+  ): Promise<RadioQueueItemDto[]> {
+    const isMember = await this.repo.isParticipant(channelId, userId);
+    if (!isMember) {
+      throw new ForbiddenException('You are not a participant in this channel');
+    }
+
+    const queue = await this.repo.getRadioQueue(channelId);
+    return queue.map((q) => ({
+      ...q,
+      requested_at: new Date(q.requested_at).toISOString(),
+    }));
+  }
+
   async requestMic(
     channelId: string,
     userId: string,
@@ -87,7 +114,6 @@ export class CommsService {
       throw new NotFoundException('Channel not found');
     }
 
-    // 1. Permission Check
     const canComm = await this.repo.canUserCommunicate(
       channel.incident_id,
       userId,
@@ -115,10 +141,6 @@ export class CommsService {
     await this.emitQueueUpdate(channelId);
   }
 
-  /**
-   * @description
-   * Release the Push-to-Talk microphone and grant it to the next in line.
-   */
   async releaseMic(channelId: string, queueId: string): Promise<void> {
     await this.repo.updateRadioStatus(queueId, CommRadioStatus.COMPLETED);
     const queue = await this.repo.getRadioQueue(channelId);
@@ -134,10 +156,6 @@ export class CommsService {
     await this.emitQueueUpdate(channelId);
   }
 
-  /**
-   * @description
-   * Send a text message to the channel. Enforces permissions before saving.
-   */
   async sendMessage(
     channelId: string,
     senderId: string,
@@ -149,7 +167,6 @@ export class CommsService {
       throw new NotFoundException('Channel not found');
     }
 
-    // 1. Permission Check
     const canComm = await this.repo.canUserCommunicate(
       channel.incident_id,
       senderId,
@@ -164,10 +181,6 @@ export class CommsService {
     return message;
   }
 
-  /**
-   * @description
-   * Get the chat history for a channel.
-   */
   async getMessageHistory(
     channelId: string,
     limit?: number,
@@ -175,10 +188,6 @@ export class CommsService {
     return this.repo.getMessageHistory(channelId, limit);
   }
 
-  /**
-   * @description
-   * Internal helper to broadcast the updated Push-to-Talk queue.
-   */
   private async emitQueueUpdate(channelId: string): Promise<void> {
     const queue = await this.repo.getRadioQueue(channelId);
     this.events.emit(CommsEvents.QUEUE_UPDATED, { channelId, queue });

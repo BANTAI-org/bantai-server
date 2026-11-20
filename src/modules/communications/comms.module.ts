@@ -8,22 +8,8 @@ import { CommsRepository } from './comms.repository';
 import { CommsGateway } from './comms.gateway';
 import { RealtimeKitService } from './realtimekit.service';
 
-/**
- * @description
- * The Communications Module.
- *
- * This module handles all real-time tactical communication for an incident:
- * 1. Text Chat (REST + Socket.IO)
- * 2. Voice Intercom (Cloudflare RealtimeKit WebRTC)
- * 3. Push-to-Talk Queue Management (PostgreSQL)
- */
 @Module({
-  imports: [
-    ConfigModule,
-    DatabaseModule,
-    // Required for the WebSocket Gateway to verify the JWT handshake
-    JwtModule.register({}),
-  ],
+  imports: [ConfigModule, DatabaseModule, JwtModule.register({})],
   controllers: [CommsController],
   providers: [CommsService, CommsRepository, CommsGateway, RealtimeKitService],
   exports: [CommsService],
