@@ -5,7 +5,6 @@ import { CommChannel } from './interfaces/comms-channel.interface';
 import { CommMessage } from './interfaces/comms-message.interface';
 import { CommRadioQueueView } from './interfaces/comms-radio-queue-view.interface';
 import { CommParticipantRole } from './enums/comms-participant-role.enum';
-import { CommRadioStatus } from './enums/comms-radio-status.enum';
 import { Role } from '../../common/enums/role-enum';
 import { ParticipantDto, ActiveChannelResponseDto } from './dto/comms.dto';
 
@@ -76,6 +75,21 @@ export class CommsRepository {
   // PERMISSIONS
   // =====================================================================
 
+  async getIncidentCommsContext(incidentId: string): Promise<{
+    driver_id: string | null;
+    threat_category: string;
+  } | null> {
+    const [row] = await queryRows<{
+      driver_id: string | null;
+      threat_category: string;
+    }>(
+      this.db,
+      `SELECT driver_id, threat_category FROM incident WHERE id = $1::uuid`,
+      [incidentId],
+    );
+    return row || null;
+  }
+
   async canUserCommunicate(
     incidentId: string,
     userId: string,
@@ -85,6 +99,18 @@ export class CommsRepository {
       return true;
     }
 
+    // Check if the user is the VICTIM (the driver who owns the incident)
+    const [incident] = await queryRows<{ driver_id: string | null }>(
+      this.db,
+      `SELECT driver_id FROM incident WHERE id = $1::uuid`,
+      [incidentId],
+    );
+
+    if (incident && incident.driver_id === userId) {
+      return true; // The victim is always allowed to communicate
+    }
+
+    // Otherwise, check if they are a peer who is actively helping
     const [row] = await queryRows<{ status: string }>(
       this.db,
       `SELECT status FROM incident_peer_response 
@@ -164,19 +190,76 @@ export class CommsRepository {
   // RADIO QUEUE (PUSH-TO-TALK)
   // =====================================================================
 
-  async requestMic(
+  async requestMicAtomic(
     channelId: string,
     userId: string,
     priority: number,
-  ): Promise<string> {
-    const [row] = await queryRows<{ id: string }>(
-      this.db,
-      `INSERT INTO comm_radio_queue (channel_id, user_id, priority)
-       VALUES ($1::uuid, $2::uuid, $3)
-       RETURNING id`,
-      [channelId, userId, priority],
-    );
-    return row.id;
+  ): Promise<void> {
+    await this.db.withTransaction(async (client) => {
+      // 1. Serialize requests for this channel (prevents the race condition)
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        channelId,
+      ]);
+
+      // 2. Check if someone is already speaking
+      const speaker = await client.query(
+        `SELECT id FROM comm_radio_queue WHERE channel_id = $1::uuid AND status = 'speaking' LIMIT 1`,
+        [channelId],
+      );
+
+      // 3. Insert the new request
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO comm_radio_queue (channel_id, user_id, priority)
+         VALUES ($1::uuid, $2::uuid, $3)
+         RETURNING id`,
+        [channelId, userId, priority],
+      );
+
+      // 4. If the channel is silent, instantly grant them the mic
+      if (speaker.rowCount === 0) {
+        await client.query(
+          `UPDATE comm_radio_queue 
+           SET status = 'speaking', started_speaking_at = now() 
+           WHERE id = $1::uuid`,
+          [rows[0].id],
+        );
+      }
+    });
+  }
+
+  async releaseMicAtomic(channelId: string, queueId: string): Promise<void> {
+    await this.db.withTransaction(async (client) => {
+      // 1. Serialize requests for this channel
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        channelId,
+      ]);
+
+      // 2. Complete the current speaker
+      await client.query(
+        `UPDATE comm_radio_queue 
+         SET status = 'completed', ended_speaking_at = now() 
+         WHERE id = $1::uuid AND channel_id = $2::uuid`,
+        [queueId, channelId],
+      );
+
+      // 3. Find the next person in line
+      const { rows } = await client.query<{ id: string }>(
+        `SELECT id FROM comm_radio_queue 
+         WHERE channel_id = $1::uuid AND status = 'requested'
+         ORDER BY priority DESC, requested_at ASC LIMIT 1`,
+        [channelId],
+      );
+
+      // 4. Promote them
+      if (rows.length > 0) {
+        await client.query(
+          `UPDATE comm_radio_queue 
+           SET status = 'speaking', started_speaking_at = now() 
+           WHERE id = $1::uuid`,
+          [rows[0].id],
+        );
+      }
+    });
   }
 
   async getRadioQueue(channelId: string): Promise<CommRadioQueueView[]> {
@@ -185,35 +268,6 @@ export class CommsRepository {
       `SELECT * FROM comm_radio_queue_view WHERE channel_id = $1::uuid`,
       [channelId],
     );
-  }
-
-  async updateRadioStatus(
-    queueId: string,
-    status: CommRadioStatus,
-  ): Promise<void> {
-    let timestampUpdate = '';
-    if (status === CommRadioStatus.SPEAKING) {
-      timestampUpdate = ', started_speaking_at = now()';
-    }
-    if (status === CommRadioStatus.COMPLETED) {
-      timestampUpdate = ', ended_speaking_at = now()';
-    }
-
-    await this.db.query(
-      `UPDATE comm_radio_queue SET status = $1::comm_radio_status ${timestampUpdate} WHERE id = $2::uuid`,
-      [status, queueId],
-    );
-  }
-
-  async getCurrentSpeaker(
-    channelId: string,
-  ): Promise<CommRadioQueueView | null> {
-    const [row] = await queryRows<CommRadioQueueView>(
-      this.db,
-      `SELECT * FROM comm_radio_queue_view WHERE channel_id = $1::uuid AND status = 'speaking' LIMIT 1`,
-      [channelId],
-    );
-    return row || null;
   }
 
   // =====================================================================

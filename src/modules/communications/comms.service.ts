@@ -7,7 +7,6 @@ import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { CommsRepository } from './comms.repository';
 import { RealtimeKitService } from './realtimekit.service';
 import { CommParticipantRole } from './enums/comms-participant-role.enum';
-import { CommRadioStatus } from './enums/comms-radio-status.enum';
 import { Role } from '../../common/enums/role-enum';
 import { CommsEvents } from './comms.gateway';
 import type { CommMessage } from './interfaces/comms-message.interface';
@@ -108,10 +107,18 @@ export class CommsService {
     channelId: string,
     userId: string,
     userRole: Role,
+    mode: 'PTT' | 'OPEN_MIC',
   ): Promise<void> {
     const channel = await this.repo.getChannelById(channelId);
     if (!channel || !channel.incident_id) {
       throw new NotFoundException('Channel not found');
+    }
+
+    const incident = await this.repo.getIncidentCommsContext(
+      channel.incident_id,
+    );
+    if (!incident) {
+      throw new NotFoundException('Incident context not found');
     }
 
     const canComm = await this.repo.canUserCommunicate(
@@ -125,34 +132,38 @@ export class CommsService {
       );
     }
 
-    const currentSpeaker = await this.repo.getCurrentSpeaker(channelId);
+    const isVictim = incident.driver_id === userId;
     const isResponder =
       userRole === Role.RESPONDER ||
       userRole === Role.ADMIN ||
       userRole === Role.SUPER;
-    const priority = isResponder ? 100 : 10;
 
-    const queueId = await this.repo.requestMic(channelId, userId, priority);
-
-    if (!currentSpeaker) {
-      await this.repo.updateRadioStatus(queueId, CommRadioStatus.SPEAKING);
+    // Safety Gate: Open Mic is strictly reserved for victims of HAZARD incidents.
+    // This prevents a victim from having to hold a button while hiding or at gunpoint.
+    if (
+      mode === 'OPEN_MIC' &&
+      (!isVictim || incident.threat_category !== 'HAZARD')
+    ) {
+      throw new ForbiddenException(
+        'Open Mic is only permitted for the victim of an active hazard.',
+      );
     }
+
+    // Priority Logic: Victim (200) > Responder (100) > Peer (10)
+    let priority = 10;
+    if (isVictim) {
+      priority = 200;
+    } else if (isResponder) {
+      priority = 100;
+    }
+
+    await this.repo.requestMicAtomic(channelId, userId, priority);
 
     await this.emitQueueUpdate(channelId);
   }
 
   async releaseMic(channelId: string, queueId: string): Promise<void> {
-    await this.repo.updateRadioStatus(queueId, CommRadioStatus.COMPLETED);
-    const queue = await this.repo.getRadioQueue(channelId);
-
-    if (queue.length > 0) {
-      const nextInLine = queue[0];
-      await this.repo.updateRadioStatus(
-        nextInLine.queue_id,
-        CommRadioStatus.SPEAKING,
-      );
-    }
-
+    await this.repo.releaseMicAtomic(channelId, queueId);
     await this.emitQueueUpdate(channelId);
   }
 

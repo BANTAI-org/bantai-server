@@ -133,3 +133,13 @@ export class ActiveChannelResponseDto {
   @ApiProperty({ example: 'ON_SCENE' })
   incident_status!: string;
 }
+
+export class RequestMicDto {
+  @ApiProperty({
+    enum: ['PTT', 'OPEN_MIC'],
+    example: 'PTT',
+    description:
+      'Open Mic is strictly reserved for victims of a HAZARD (e.g., gun/blade) to allow hands-free communication.',
+  })
+  mode!: 'PTT' | 'OPEN_MIC';
+}

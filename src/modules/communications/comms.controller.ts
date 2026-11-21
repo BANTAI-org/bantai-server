@@ -31,6 +31,7 @@ import {
   RadioQueueItemDto,
   CommMessageResponseDto,
   ActiveChannelResponseDto,
+  RequestMicDto,
 } from './dto/comms.dto';
 import { CommMessage } from './interfaces/comms-message.interface';
 
@@ -127,7 +128,11 @@ export class CommsController {
 
   @Post(':channelId/radio/request')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Request the Push-to-Talk microphone' })
+  @ApiOperation({
+    summary: 'Request the Push-to-Talk microphone',
+    description:
+      'Victims of HAZARD incidents can request OPEN_MIC for hands-free communication.',
+  })
   @ApiParam({ name: 'channelId', description: 'Channel UUID', format: 'uuid' })
   @ApiResponse({
     status: 200,
@@ -135,14 +140,16 @@ export class CommsController {
   })
   @ApiResponse({
     status: 403,
-    description: 'User does not have permission to speak',
+    description:
+      'User does not have permission to speak, or invalid mode used.',
   })
   async requestMic(
     @Param('channelId', ParseUUIDPipe) channelId: string,
+    @Body() dto: RequestMicDto,
     @CurrentUser('sub') userId: string,
     @CurrentUser('role') role: Role,
   ): Promise<{ status: string }> {
-    await this.commsService.requestMic(channelId, userId, role);
+    await this.commsService.requestMic(channelId, userId, role, dto.mode);
     return { status: 'queued' };
   }
 
