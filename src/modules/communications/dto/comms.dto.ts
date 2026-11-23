@@ -25,7 +25,12 @@ export class ParticipantDto {
   @ApiProperty({ example: 'Juan Dela Cruz' })
   name!: string;
 
-  @ApiProperty({ example: 'https://...', nullable: true })
+  @ApiProperty({
+    type: String,
+    example: 'https://...',
+    nullable: true,
+    required: false,
+  })
   avatar_url!: string | null;
 
   @ApiProperty({ enum: ['dispatcher', 'responder', 'peer'] })
@@ -35,43 +40,55 @@ export class ParticipantDto {
   joined_at!: string;
 
   @ApiProperty({
+    type: String,
     example: 'angkas',
     nullable: true,
+    required: false,
     description: 'Only for peers',
   })
   service_provider?: string | null;
 
   @ApiProperty({
+    type: String,
     example: 'DRV-12345',
     nullable: true,
+    required: false,
     description: 'Only for peers',
   })
   service_id?: string | null;
 
   @ApiProperty({
+    type: String,
     example: 'PCPT',
     nullable: true,
+    required: false,
     description: 'Only for responders',
   })
   rank?: string | null;
 
   @ApiProperty({
+    type: String,
     example: 'police',
     nullable: true,
+    required: false,
     description: 'Only for responders',
   })
   agency?: string | null;
 
   @ApiProperty({
+    type: String,
     example: 'uuid',
     nullable: true,
+    required: false,
     description: 'Only for responders',
   })
   command_center_id?: string | null;
 
   @ApiProperty({
+    type: String,
     example: 'Station 5',
     nullable: true,
+    required: false,
     description: 'Only for responders',
   })
   command_center_name?: string | null;
@@ -93,7 +110,11 @@ export class RadioQueueItemDto {
   @ApiProperty()
   priority!: number;
 
-  @ApiProperty({ nullable: true })
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    required: false,
+  })
   responder_agency!: string | null;
 
   @ApiProperty()

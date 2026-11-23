@@ -17,9 +17,12 @@ import {
   ApiParam,
   ApiQuery,
   ApiResponse,
+  ApiBody,
 } from '@nestjs/swagger';
 import { JwtGuard } from '../../common/guards/jwt.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/role.decorator';
+import { ApiRoles } from '../../common/decorators/api-roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Role } from '../../common/enums/role-enum';
 import { CommsService } from './comms.service';
@@ -35,6 +38,8 @@ import {
 } from './dto/comms.dto';
 import { CommMessage } from './interfaces/comms-message.interface';
 
+const ANY_USER = [Role.DRIVER, Role.RESPONDER, Role.ADMIN, Role.SUPER];
+
 @ApiTags('Communications')
 @ApiBearerAuth('access-token')
 @Controller('comms')
@@ -43,6 +48,8 @@ export class CommsController {
   constructor(private readonly commsService: CommsService) {}
 
   @Get('active')
+  @Roles(...ANY_USER)
+  @ApiRoles(...ANY_USER)
   @ApiOperation({
     summary: 'Get the current active comms channel for the user',
     description:
@@ -60,6 +67,8 @@ export class CommsController {
   }
 
   @Post(':incidentId/join')
+  @Roles(...ANY_USER)
+  @ApiRoles(...ANY_USER)
   @ApiOperation({
     summary: 'Join a tactical channel and get a RealtimeKit token',
   })
@@ -88,6 +97,8 @@ export class CommsController {
   }
 
   @Get(':channelId/participants')
+  @Roles(...ANY_USER)
+  @ApiRoles(...ANY_USER)
   @ApiOperation({
     summary: 'View all active participants in the channel',
     description:
@@ -108,6 +119,8 @@ export class CommsController {
   }
 
   @Get(':channelId/radio/queue')
+  @Roles(...ANY_USER)
+  @ApiRoles(...ANY_USER)
   @ApiOperation({
     summary: 'View the active Push-to-Talk queue',
     description: 'Returns the current speaker and everyone waiting in line.',
@@ -128,6 +141,8 @@ export class CommsController {
 
   @Post(':channelId/radio/request')
   @HttpCode(HttpStatus.OK)
+  @Roles(Role.DRIVER, Role.RESPONDER)
+  @ApiRoles(Role.DRIVER, Role.RESPONDER)
   @ApiOperation({
     summary: 'Request the Push-to-Talk microphone',
     description:
@@ -137,6 +152,7 @@ export class CommsController {
   @ApiResponse({
     status: 200,
     description: 'Mic requested (queued or granted)',
+    schema: { type: 'object', properties: { status: { type: 'string' } } },
   })
   @ApiResponse({
     status: 403,
@@ -155,9 +171,24 @@ export class CommsController {
 
   @Post(':channelId/radio/release')
   @HttpCode(HttpStatus.OK)
+  @Roles(Role.DRIVER, Role.RESPONDER)
+  @ApiRoles(Role.DRIVER, Role.RESPONDER)
   @ApiOperation({ summary: 'Release the microphone' })
   @ApiParam({ name: 'channelId', description: 'Channel UUID', format: 'uuid' })
-  @ApiResponse({ status: 200, description: 'Mic released successfully' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        queueId: { type: 'string', format: 'uuid' },
+      },
+      required: ['queueId'],
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Mic released successfully',
+    schema: { type: 'object', properties: { status: { type: 'string' } } },
+  })
   async releaseMic(
     @Param('channelId', ParseUUIDPipe) channelId: string,
     @Body('queueId', ParseUUIDPipe) queueId: string,
@@ -167,9 +198,15 @@ export class CommsController {
   }
 
   @Post(':channelId/messages')
+  @Roles(...ANY_USER)
+  @ApiRoles(...ANY_USER)
   @ApiOperation({ summary: 'Send a text message to the channel' })
   @ApiParam({ name: 'channelId', description: 'Channel UUID', format: 'uuid' })
-  @ApiResponse({ status: 201, description: 'Message sent successfully' })
+  @ApiResponse({
+    status: 201,
+    description: 'Message sent successfully',
+    type: CommMessageResponseDto,
+  })
   @ApiResponse({
     status: 403,
     description: 'User does not have permission to chat',
@@ -184,6 +221,8 @@ export class CommsController {
   }
 
   @Get(':channelId/messages')
+  @Roles(...ANY_USER)
+  @ApiRoles(...ANY_USER)
   @ApiOperation({ summary: 'Get chat history for a channel' })
   @ApiParam({ name: 'channelId', description: 'Channel UUID', format: 'uuid' })
   @ApiQuery({

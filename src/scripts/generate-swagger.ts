@@ -28,13 +28,15 @@ import { RedisModule } from '../modules/redis/redis.module';
 
 /**
  * Filters the generated Swagger document based on allowed roles.
- * Public endpoints (no security requirements) are included if 'public' is in the array.
  */
 function filterSwaggerByRole(
   document: OpenAPIObject,
   allowedRoles: string[],
 ): OpenAPIObject {
   const filteredPaths: Record<string, any> = {};
+
+  // Normalize allowed roles to lowercase for comparison
+  const normalizedAllowedRoles = allowedRoles.map((r) => r.toLowerCase());
 
   for (const [path, methods] of Object.entries(document.paths || {})) {
     const filteredMethods: Record<string, any> = {};
@@ -44,27 +46,24 @@ function filterSwaggerByRole(
     )) {
       const op = operation as Record<string, any>;
 
-      // Read the 'x-roles' custom extension we added via @ApiRoles()
       const endpointRoles: string[] = Array.isArray(op['x-roles'])
-        ? (op['x-roles'] as string[])
+        ? (op['x-roles'] as string[]).map((r) => r.toLowerCase())
         : [];
 
-      // Safe check for the security array to avoid ESLint "unsafe member access"
       const securityArray: unknown[] = Array.isArray(op.security)
         ? op.security
         : [];
       const isPublic = securityArray.length === 0;
 
-      // Keep endpoint if it's public and we allow public, OR if it matches a requested role
+      // Compare normalized roles
       if (
-        (isPublic && allowedRoles.includes('public')) ||
-        endpointRoles.some((role) => allowedRoles.includes(role))
+        (isPublic && normalizedAllowedRoles.includes('public')) ||
+        endpointRoles.some((role) => normalizedAllowedRoles.includes(role))
       ) {
         filteredMethods[method] = op;
       }
     }
 
-    // Only keep the path if it has at least one allowed method
     if (Object.keys(filteredMethods).length > 0) {
       filteredPaths[path] = filteredMethods;
     }
@@ -73,9 +72,6 @@ function filterSwaggerByRole(
   return { ...document, paths: filteredPaths };
 }
 
-/**
- * Helper function to generate a Swagger document.
- */
 async function generateSwaggerDoc(
   app: NestFastifyApplication,
   filename: string,
@@ -103,28 +99,23 @@ async function generateSwaggerDoc(
   const options =
     modulesToInclude.length > 0 ? { include: modulesToInclude } : {};
 
-  // Explicitly type document as OpenAPIObject
   let document: OpenAPIObject = SwaggerModule.createDocument(
     app,
     config,
     options,
   );
 
-  // Apply the role filter if specific roles were requested
   if (allowedRoles.length > 0) {
     document = filterSwaggerByRole(document, allowedRoles);
   }
 
-  // Use fs.promises.writeFile (async) instead of writeFileSync
-  await fs.promises.writeFile(
-    `./${filename}`,
-    JSON.stringify(document, null, 2),
-  );
+  const outputPath = `./env-${filename}`;
+  await fs.promises.writeFile(outputPath, JSON.stringify(document, null, 2));
 
   const roleInfo = allowedRoles.length
     ? ` (Roles: ${allowedRoles.join(', ')})`
     : ' (All Roles)';
-  console.log(`Generated: ${filename}${roleInfo}`);
+  console.log(`Generated: ${outputPath}${roleInfo}`);
 }
 
 async function generate(): Promise<void> {
@@ -136,10 +127,8 @@ async function generate(): Promise<void> {
     { logger: false },
   );
 
-  // 1. GLOBAL (Everything)
   await generateSwaggerDoc(app, 'swagger.json', 'Bantai Full API');
 
-  // 2. COMMS TEAM (Radio & Chat)
   await generateSwaggerDoc(
     app,
     'comms-swagger.json',
@@ -147,7 +136,22 @@ async function generate(): Promise<void> {
     [CommunicationsModule, AuthModule],
   );
 
-  // 3. DISPATCH & DASHBOARD TEAM (Command Center & Web)
+  await generateSwaggerDoc(
+    app,
+    'rider-comms.swagger.json',
+    'Bantai Rider Comms API',
+    [CommunicationsModule],
+    ['DRIVER', 'public'],
+  );
+
+  await generateSwaggerDoc(
+    app,
+    'responder-comms.swagger.json',
+    'Bantai Responder Comms API',
+    [CommunicationsModule],
+    ['RESPONDER', 'public'],
+  );
+
   await generateSwaggerDoc(
     app,
     'dispatch-swagger.json',
@@ -158,10 +162,10 @@ async function generate(): Promise<void> {
       CommandCenterModule,
       DashboardModule,
       AuthModule,
+      CommunicationsModule,
     ],
   );
 
-  // 4. MOBILE & HARDWARE TEAM (Flutter App & Raspberry Pi)
   await generateSwaggerDoc(
     app,
     'mobile-swagger.json',
@@ -172,6 +176,7 @@ async function generate(): Promise<void> {
       DevicesModule,
       GpsModule,
       IncidentModule,
+      CommunicationsModule,
       AuthModule,
     ],
   );
@@ -183,7 +188,6 @@ async function generate(): Promise<void> {
     [CommandCenterModule],
   );
 
-  // 5. ADMIN & SYSTEM TEAM (Audit, SMS, Emails)
   await generateSwaggerDoc(
     app,
     'admin-swagger.json',
@@ -191,11 +195,6 @@ async function generate(): Promise<void> {
     [AuditLogsModule, SmsModule, EmailModule, AuthModule],
   );
 
-  // -------------------------------------------------------------------
-  // 6. ROLE-SPECIFIC APPS (Filtered by @ApiRoles decorator)
-  // -------------------------------------------------------------------
-
-  // Driver Mobile App (Only endpoints for Drivers + Public)
   await generateSwaggerDoc(
     app,
     'driver-app-swagger.json',
@@ -203,25 +202,23 @@ async function generate(): Promise<void> {
     [],
     ['DRIVER', 'public'],
   );
-  // Driver Mobile App (Only endpoints for Drivers + Public)
+
   await generateSwaggerDoc(
     app,
     'driver-app-2-swagger.json',
     'Bantai Driver Mobile API',
-    [DriverModule, StorageModule, RedisModule],
+    [DriverModule, StorageModule, RedisModule, CommunicationsModule],
     ['DRIVER', 'public'],
   );
 
-  // Responder Mobile App (Only endpoints for Responders + Public)
   await generateSwaggerDoc(
     app,
     'responder-app-swagger.json',
     'Bantai Responder Mobile API',
-    [],
+    [CommunicationsModule],
     ['RESPONDER', 'public'],
   );
 
-  // Admin Dashboard (Only endpoints for Admins/Supers + Public)
   await generateSwaggerDoc(
     app,
     'admin-dashboard-swagger.json',
