@@ -47,9 +47,21 @@ export class CommsRepository {
     return row.id;
   }
 
+  // ADDED THIS:
+  async updateCfMeetingId(
+    channelId: string,
+    cfMeetingId: string,
+  ): Promise<void> {
+    await this.db.query(
+      `UPDATE comm_channel SET cf_meeting_id = $1 WHERE id = $2::uuid`,
+      [cfMeetingId, channelId],
+    );
+  }
+
   async findActiveChannelByUser(
     userId: string,
   ): Promise<ActiveChannelResponseDto | null> {
+    // ... (unchanged)
     const [row] = await queryRows<ActiveChannelResponseDto>(
       this.db,
       `SELECT 
@@ -99,7 +111,6 @@ export class CommsRepository {
       return true;
     }
 
-    // Check if the user is the VICTIM (the driver who owns the incident)
     const [incident] = await queryRows<{ driver_id: string | null }>(
       this.db,
       `SELECT driver_id FROM incident WHERE id = $1::uuid`,
@@ -107,10 +118,9 @@ export class CommsRepository {
     );
 
     if (incident && incident.driver_id === userId) {
-      return true; // The victim is always allowed to communicate
+      return true;
     }
 
-    // Otherwise, check if they are a peer who is actively helping
     const [row] = await queryRows<{ status: string }>(
       this.db,
       `SELECT status FROM incident_peer_response 
@@ -196,18 +206,15 @@ export class CommsRepository {
     priority: number,
   ): Promise<void> {
     await this.db.withTransaction(async (client) => {
-      // 1. Serialize requests for this channel (prevents the race condition)
       await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
         channelId,
       ]);
 
-      // 2. Check if someone is already speaking
       const speaker = await client.query(
         `SELECT id FROM comm_radio_queue WHERE channel_id = $1::uuid AND status = 'speaking' LIMIT 1`,
         [channelId],
       );
 
-      // 3. Insert the new request
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO comm_radio_queue (channel_id, user_id, priority)
          VALUES ($1::uuid, $2::uuid, $3)
@@ -215,7 +222,6 @@ export class CommsRepository {
         [channelId, userId, priority],
       );
 
-      // 4. If the channel is silent, instantly grant them the mic
       if (speaker.rowCount === 0) {
         await client.query(
           `UPDATE comm_radio_queue 
@@ -229,12 +235,10 @@ export class CommsRepository {
 
   async releaseMicAtomic(channelId: string, queueId: string): Promise<void> {
     await this.db.withTransaction(async (client) => {
-      // 1. Serialize requests for this channel
       await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
         channelId,
       ]);
 
-      // 2. Complete the current speaker
       await client.query(
         `UPDATE comm_radio_queue 
          SET status = 'completed', ended_speaking_at = now() 
@@ -242,7 +246,6 @@ export class CommsRepository {
         [queueId, channelId],
       );
 
-      // 3. Find the next person in line
       const { rows } = await client.query<{ id: string }>(
         `SELECT id FROM comm_radio_queue 
          WHERE channel_id = $1::uuid AND status = 'requested'
@@ -250,7 +253,6 @@ export class CommsRepository {
         [channelId],
       );
 
-      // 4. Promote them
       if (rows.length > 0) {
         await client.query(
           `UPDATE comm_radio_queue 

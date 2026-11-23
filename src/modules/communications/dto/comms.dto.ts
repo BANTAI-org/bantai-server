@@ -33,7 +33,7 @@ export class ParticipantDto {
   })
   avatar_url!: string | null;
 
-  @ApiProperty({ enum: ['dispatcher', 'responder', 'peer'] })
+  @ApiProperty({ enum: ['observer', 'responder', 'peer'] })
   role!: string;
 
   @ApiProperty({ example: '2026-11-17T08:00:00.000Z' })

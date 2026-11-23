@@ -30,8 +30,17 @@ export class CommsService {
   async handleIncidentCreated(event: IncidentCreatedEvent): Promise<void> {
     const channelName = `Incident ${event.incidentId.substring(0, 8)} - ${event.threatType}`;
 
-    await this.repo.createIncidentChannel(event.incidentId, channelName);
-    await this.realtimeKit.createMeeting(channelName);
+    // 1. Create in Postgres
+    const channelId = await this.repo.createIncidentChannel(
+      event.incidentId,
+      channelName,
+    );
+
+    // 2. Create in Cloudflare
+    const cfMeetingId = await this.realtimeKit.createMeeting(channelName);
+
+    // 3. Save the CF ID to Postgres
+    await this.repo.updateCfMeetingId(channelId, cfMeetingId);
   }
 
   async getActiveChannel(
@@ -56,13 +65,18 @@ export class CommsService {
       commsRole = CommParticipantRole.RESPONDER;
     }
     if (userRole === Role.ADMIN || userRole === Role.SUPER) {
-      commsRole = CommParticipantRole.DISPATCHER;
+      commsRole = CommParticipantRole.OBSERVER;
     }
 
     await this.repo.addParticipant(channel.id, userId, commsRole);
 
+    // Use the CF meeting ID saved from the incident creation hook
+    if (!channel.cf_meeting_id) {
+      throw new NotFoundException('Voice channel not initialized');
+    }
+
     const authToken = await this.realtimeKit.generateParticipantToken(
-      channel.id,
+      channel.cf_meeting_id,
       userId,
       displayName,
     );
@@ -139,7 +153,6 @@ export class CommsService {
       userRole === Role.SUPER;
 
     // Safety Gate: Open Mic is strictly reserved for victims of HAZARD incidents.
-    // This prevents a victim from having to hold a button while hiding or at gunpoint.
     if (
       mode === 'OPEN_MIC' &&
       (!isVictim || incident.threat_category !== 'HAZARD')

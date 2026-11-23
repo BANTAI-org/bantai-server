@@ -1,5 +1,5 @@
 export enum CommParticipantRole {
-  DISPATCHER = 'dispatcher',
+  OBSERVER = 'observer',
   RESPONDER = 'responder',
   PEER = 'peer',
 }

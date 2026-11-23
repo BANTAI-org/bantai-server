@@ -12,6 +12,7 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { CommMessage } from './interfaces/comms-message.interface';
 import { CommRadioQueueView } from './interfaces/comms-radio-queue-view.interface';
+import { CommsRepository } from './comms.repository';
 
 export const CommsEvents = {
   QUEUE_UPDATED: 'comms.queue_updated',
@@ -27,6 +28,11 @@ export interface SocketUser {
   role: string;
 }
 
+interface SocketData {
+  user?: SocketUser;
+  channelId?: string;
+}
+
 @WebSocketGateway({
   namespace: 'comms',
   cors: { origin: process.env.WS_CORS_ORIGIN?.split(',') ?? false },
@@ -40,34 +46,31 @@ export class CommsGateway implements OnGatewayInit, OnGatewayConnection {
   constructor(
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly commsRepository: CommsRepository,
   ) {}
 
   afterInit(server: Namespace): void {
+    // Pass the async logic to a separate method and mark it void
+    // to satisfy the linter's synchronous middleware expectation.
     server.use((socket, next) => {
-      this.authenticate(socket)
-        .then((user) => {
-          (socket.data as { user?: SocketUser }).user = user;
-          next();
-        })
-        .catch(() => next(new Error('unauthorized')));
+      void this.handleHandshake(socket, next);
     });
     this.logger.log('Comms Gateway initialised');
   }
 
   handleConnection(socket: Socket): void {
-    const user = (socket.data as { user?: SocketUser }).user;
-    if (!user) {
+    const data = socket.data as SocketData;
+    const user = data.user;
+    const channelId = data.channelId;
+
+    // Middleware guarantees these exist, but we check for safety
+    if (!user || !channelId) {
       socket.disconnect(true);
       return;
     }
 
-    const channelId = socket.handshake.query.channelId;
-    if (typeof channelId === 'string') {
-      void socket.join(CommsRooms.channel(channelId));
-      this.logger.log(`User ${user.id} joined comms channel: ${channelId}`);
-    } else {
-      socket.disconnect(true);
-    }
+    void socket.join(CommsRooms.channel(channelId));
+    this.logger.log(`User ${user.id} joined comms channel: ${channelId}`);
   }
 
   @OnEvent(CommsEvents.QUEUE_UPDATED)
@@ -85,6 +88,44 @@ export class CommsGateway implements OnGatewayInit, OnGatewayConnection {
     this.server
       .to(CommsRooms.channel(payload.channelId))
       .emit(CommsEvents.MESSAGE_NEW, payload.message);
+  }
+
+  private async handleHandshake(
+    socket: Socket,
+    next: (err?: Error) => void,
+  ): Promise<void> {
+    try {
+      // 1. Authenticate the JWT
+      const user = await this.authenticate(socket);
+
+      // 2. Validate the channelId query parameter
+      const channelId = socket.handshake.query.channelId;
+      if (typeof channelId !== 'string' || !channelId) {
+        throw new Error('channelId query parameter is required');
+      }
+
+      // 3. Verify the user is actually a participant in this channel
+      const isParticipant = await this.commsRepository.isParticipant(
+        channelId,
+        user.id,
+      );
+      if (!isParticipant) {
+        throw new Error('User is not a registered participant');
+      }
+
+      // 4. Attach validated data to the socket
+      (socket.data as SocketData).user = user;
+      (socket.data as SocketData).channelId = channelId;
+
+      next();
+    } catch (error) {
+      this.logger.warn(
+        `Socket connection rejected: ${
+          error instanceof Error ? error.message : 'unknown error'
+        }`,
+      );
+      next(new Error('unauthorized'));
+    }
   }
 
   private async authenticate(socket: Socket): Promise<SocketUser> {
