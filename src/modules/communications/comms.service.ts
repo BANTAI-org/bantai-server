@@ -60,6 +60,19 @@ export class CommsService {
       throw new NotFoundException('No active comms channel for this incident');
     }
 
+    // Security Gate: Enforce Command Center boundaries for Admins
+    if (userRole === Role.ADMIN) {
+      const isAuthorized = await this.repo.isAdminAuthorizedForIncident(
+        incidentId,
+        userId,
+      );
+      if (!isAuthorized) {
+        throw new ForbiddenException(
+          'You do not have permission to monitor this incident.',
+        );
+      }
+    }
+
     let commsRole = CommParticipantRole.PEER;
     if (userRole === Role.RESPONDER) {
       commsRole = CommParticipantRole.RESPONDER;

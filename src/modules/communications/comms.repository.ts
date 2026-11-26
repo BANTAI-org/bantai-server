@@ -301,4 +301,32 @@ export class CommsRepository {
       [channelId, limit],
     );
   }
+
+  async isAdminAuthorizedForIncident(
+    incidentId: string,
+    adminId: string,
+  ): Promise<boolean> {
+    const [row] = await queryRows<{ is_authorized: boolean }>(
+      this.db,
+      `SELECT EXISTS (
+         SELECT 1
+         FROM incident i
+         LEFT JOIN user_account claimant ON claimant.id = i.claimed_by_id
+         WHERE i.id = $1::uuid
+           AND (
+             -- Condition A: The claimant belongs to the same Command Center as the Admin
+             claimant.command_center_id = (SELECT command_center_id FROM user_account WHERE id = $2::uuid)
+             OR
+             -- Condition B: The incident was escalated to the Admin's Command Center
+             EXISTS (
+               SELECT 1 FROM incident_escalation e
+               WHERE e.incident_id = i.id
+                 AND e.command_center_id = (SELECT command_center_id FROM user_account WHERE id = $2::uuid)
+             )
+           )
+       ) AS is_authorized`,
+      [incidentId, adminId],
+    );
+    return row?.is_authorized ?? false;
+  }
 }
